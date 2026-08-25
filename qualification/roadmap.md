@@ -18,7 +18,8 @@ This file owns live task status and next action.
 | Upstream baseline | Frozen for assessment | `4f7baae414d596eaa82ee90ee529f9957ca565dd` |
 | Research and operating model | In progress | Bootstrap branch documents require final publication review |
 | `core-v1` profile | Draft | Public corpus and remaining mutations not frozen |
-| Candidate qualification | In progress | macOS ARM artifact identity and initial result-path probes complete |
+| Controlled-use prerelease | Published | [`0.67.0+qualified.20260825.1`](https://github.com/rbeauchamp/kani/releases/tag/qualified-0.67.0%2B20260825.1); signed tag, hashes, provenance, and final download readback complete |
+| Candidate qualification | In progress | Controlled-use artifact transport complete; broader public promotion gates remain |
 | Stable release | Blocked | Promotion gate incomplete |
 
 ## Assumption verdict
@@ -115,6 +116,18 @@ artifact set, with no unexplained or missing result.
 
 ## Phase 4 — publish the first stable qualified release
 
+The controlled-use prerelease is complete without claiming this stable-release
+exit gate:
+
+- [x] Publish exact upstream-built macOS ARM64 and Linux x86_64 bundles under a
+      non-conflicting qualified tag.
+- [x] Publish respectful release notes, the exact base, profile limitations,
+      provenance, signed checksums, and installation instructions.
+- [x] Verify every draft asset by clean download before publication.
+- [x] Publish the signed annotated tag and GitHub prerelease.
+- [x] Read back the public tag target, signature status, release state, asset
+      names, sizes, GitHub digests, and every downloaded checksum.
+
 - [ ] Validate downstream Cargo versioning and tag format against the release
       workflow. The provisional version is
       `0.67.0+qualified.YYYYMMDD.N`.
@@ -154,6 +167,8 @@ available.
 
 ## Immediate next action
 
-Finish the public fail-closed mutation corpus and Linux x86_64 artifact smoke
-gate, then freeze the smallest public harness corpus that exercises every
-included `core-v1` result path without exposing application-specific material.
+Controlled adopters may pin the published tag and artifact hashes, run their
+own access-controlled acceptance gate, and retain their receipt. In parallel,
+finish the public fail-closed mutation corpus, freeze the smallest public
+harness corpus, generate an SBOM, obtain independent public review, and replay
+the Linux artifact on a recorded native x86_64 runner before stable promotion.

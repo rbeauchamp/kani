@@ -52,8 +52,15 @@ whose manifest still has `bootstrap` status cannot support a stable release.
 ## Current state
 
 The fork was created on 2026-08-25. The first candidate assessment is recorded
-in [`releases/2026-08-candidate-1.md`](releases/2026-08-candidate-1.md). No
-qualified release has been promoted yet.
+in [`releases/2026-08-candidate-1.md`](releases/2026-08-candidate-1.md).
+
+The unofficial controlled-use prerelease
+[`0.67.0+qualified.20260825.1`](https://github.com/rbeauchamp/kani/releases/tag/qualified-0.67.0%2B20260825.1)
+is published for the narrow `core-v1` envelope. Its
+[`release scope`](releases/qualified-0.67.0+20260825.1/release-scope.md) and
+[`publication readback`](releases/qualified-0.67.0+20260825.1/publication-readback.md)
+record the exact identity and limitations. No general stable qualified release
+has been promoted yet.
 
 ## Public collaboration standard
 

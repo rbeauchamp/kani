@@ -92,6 +92,21 @@ artifact qualification.
 The dated bootstrap execution record is
 [`2026-08-25-macos-arm64-candidate-1.md`](../evidence/2026-08-25-macos-arm64-candidate-1.md).
 
+## Controlled-use publication
+
+The exact candidate has been published as the unofficial controlled-use
+prerelease
+[`0.67.0+qualified.20260825.1`](https://github.com/rbeauchamp/kani/releases/tag/qualified-0.67.0%2B20260825.1).
+The signed tag points directly to this candidate, and the byte-identical
+upstream-built artifacts, signed checksums, provenance, installation method,
+scope, and post-publication readback are recorded under
+[`qualified-0.67.0+20260825.1/`](qualified-0.67.0+20260825.1/).
+
+This controlled-use publication does not change the broader verdict at the top
+of this assessment: the candidate is not yet promotable as a general stable
+qualified release. Adopters must enforce `core-v1`, verify exact artifacts, and
+retain their own access-controlled acceptance receipt.
+
 ## Required evidence before promotion
 
 - resolve every pending platform and runner identity;
