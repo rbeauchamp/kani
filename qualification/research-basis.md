@@ -209,6 +209,8 @@ required semantics or response windows.
 - [Kani open issues](https://github.com/model-checking/kani/issues?q=is%3Aissue%20state%3Aopen)
 - [Kani open pull requests](https://github.com/model-checking/kani/pulls?q=is%3Apr%20state%3Aopen)
 - [Kani Soundness milestone](https://github.com/model-checking/kani/milestone/8)
+- [`core-v1` open soundness triage](evidence/2026-08-25-open-soundness-triage.md)
+- [`core-v1` result-integrity triage](evidence/2026-08-25-result-integrity-triage.md)
 - [`AGENTS.md`](../AGENTS.md), including Kani's soundness-first principle
 - [`CONTRIBUTING.md`](../CONTRIBUTING.md)
 - [release workflow](../.github/workflows/release.yml)

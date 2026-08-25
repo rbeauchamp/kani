@@ -49,12 +49,22 @@ does not broaden Kani's documented guarantees.
 - nondeterministic or autoharness-generated `Rc<T>` and `Arc<T>` values;
 - `--quiet` and its short form;
 - `--export-json` as a verdict source;
+- `--fail-fast`;
+- parallel harness jobs and concurrent gates sharing a build directory;
 - experimental loop contracts and synthesized contracts;
 - `--restrict-vtable`;
 - concurrency and data-race claims;
+- non-default SMT solver backends;
 - inline or global assembly;
+- source-based code-coverage claims;
+- dynamic trait-object dispatch and vtable-semantic claims;
 - FFI/ABI claims not replaced by a reviewed model;
 - pointer-aliasing claims under Stacked Borrows or Tree Borrows;
+- pointer claims that depend on exact wrapped-address equality, ordering, or
+  provenance after wrapping out of range;
+- claims based on unspecified `repr(Rust)` layout, padding, field order, or
+  transmute compatibility;
+- custom symbol overriding or duplicate/missing-symbol behavior;
 - experimental uninitialized-memory and valid-value checks;
 - claims requiring unbounded proof; and
 - any unreviewed or unledgered warning or unsupported operation,
@@ -77,6 +87,14 @@ The receipt must confirm these provisional identities with exact observations:
 | Build environments | Local macOS identity recorded; Linux label `ubuntu-22.04`, exact image version pending first receipt |
 
 The runtime versions must be checked before proof execution.
+
+The first release qualifies only the pinned default CBMC/Kissat execution path.
+Another solver or concurrent result path requires its own profile and receipts.
+
+The residual TCB includes rustc and its MIR, Kani's translation and models,
+Irep/GOTO serialization, linking, CBMC, the selected solver, platform semantics,
+the public harnesses, and their assumptions. The first release narrows and tests
+that boundary; it does not prove it correct.
 
 ## Result policy
 

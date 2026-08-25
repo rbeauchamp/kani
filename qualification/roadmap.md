@@ -80,6 +80,12 @@ Exit gate: `core-v1` has no unresolved value that can change proof meaning.
 - [x] Investigate exact compiler-performance run
       [32815085770](https://github.com/model-checking/kani/actions/runs/32815085770)
       and record its release impact.
+- [x] Triage every currently open `[F] Soundness` item against `core-v1` and
+      record exclusions and residual TCB boundaries in
+      [`2026-08-25-open-soundness-triage.md`](evidence/2026-08-25-open-soundness-triage.md).
+- [x] Run an initial targeted search for unlabeled false-success and
+      result-integrity reports and record controls in
+      [`2026-08-25-result-integrity-triage.md`](evidence/2026-08-25-result-integrity-triage.md).
 - [ ] Search all open P0/P1 items for intersections with `core-v1`, including
       unlabeled issues.
 

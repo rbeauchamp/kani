@@ -69,6 +69,8 @@ profile receipt.
 | JSON partial/clean-pass behavior, issue #4731 | Open | JSON cannot be a verdict oracle |
 | Runtime CBMC mismatch, PR #4723 | Open | Independent exact runtime version check required |
 | Compiler-performance analysis | Potential `s2n-codec` compile-time regression | Check timeout budgets; does not independently block soundness |
+| Open soundness-labeled work | [Profile triage recorded](../evidence/2026-08-25-open-soundness-triage.md) | Mechanical exclusions and explicit residual TCB acceptance required |
+| Result-integrity search | [Initial targeted triage recorded](../evidence/2026-08-25-result-integrity-triage.md) | Existing controls recorded; full search and remaining mutations still block promotion |
 | Public profile corpus | Not yet frozen and replayed on both platforms | Blocks promotion |
 | Negative mutation corpus | False assertion, prohibited quiet result, zero-match filters, and gate parser/policy probes pass; full corpus incomplete | Blocks promotion |
 | Artifact SBOM/hash/signature | Hashes captured for initial artifacts; SBOM and signatures not generated | Blocks promotion |
@@ -95,6 +97,7 @@ The dated bootstrap execution record is
 - resolve every pending platform and runner identity;
 - freeze and replay the complete public profile corpus;
 - complete the known-hazard dispositions;
+- complete unlabeled P0/P1 discovery beyond the soundness-label triage;
 - run `core-v1` on every claimed platform from the built artifacts;
 - obtain independent exact-head semantic review;
 - store a complete immutable receipt; and

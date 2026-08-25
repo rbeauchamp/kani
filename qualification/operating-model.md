@@ -123,7 +123,8 @@ A frozen candidate must pass all applicable steps in this order:
 
 1. **Identity gate:** clean canonical checkout; expected branch/tag; exact commit
    and tree; expected upstream base and downstream patches; no replacement refs,
-   alternate index, or unexpected Git environment overrides.
+   alternate index, unexpected Git environment overrides, or shared mutable
+   build state.
 2. **Dependency gate:** exact Rust, standard library, Charon, CBMC, solver,
    target, build image, flags, and dependency lock identities.
 3. **Source gate:** format, lint, dependency policy, unit tests, regression suites,
@@ -153,6 +154,8 @@ replace steps 4–9.
   requalified.
 - `--export-json` is not a verdict oracle until empty, failed, partial, and
   fail-fast behavior is fixed and requalified.
+- `--fail-fast`, parallel jobs, and simultaneous gates sharing a target
+  directory are prohibited in `core-v1`.
 - Experimental quantifiers, autoharness, nondeterministic `Rc`/`Arc`, loop
   contracts, `--restrict-vtable`, inline/global assembly, concurrency, and
   uninitialized/valid-value experimental checks are excluded from `core-v1`
