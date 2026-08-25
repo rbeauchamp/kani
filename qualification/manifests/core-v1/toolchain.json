@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "profile": "core-v1",
+  "kani_base": "4f7baae414d596eaa82ee90ee529f9957ca565dd",
+  "kani_tree": "eff9f33ba2a79a3c815ba58080ccd3395955a88d",
+  "cargo_kani_version": "Kani Rust Verifier 0.67.0 (4f7baae) (cargo plugin)\nusing rustc 1.96.0-nightly (48cc71ee8 2026-03-31) (commit 48cc71ee 2026-03-31) with LLVM 22.1.2",
+  "cbmc_version": "6.10.0 (cbmc-6.10.0)",
+  "kissat_version": "4.0.1",
+  "platforms": {
+    "aarch64-apple-darwin": {
+      "runner": "local macOS 26.5.2 build 25F84 arm64",
+      "artifacts": [
+        {
+          "name": "kani-latest-aarch64-apple-darwin.tar.gz",
+          "sha256": "4f923fc786f38b830535a4cfddd3714ade173461f82dc85f84eabfecc8fb857a"
+        },
+        {
+          "name": "aarch64-apple-darwin-kani-verifier.crate",
+          "sha256": "35f5ca813caa2358150fa9417f06cc9d243f3f21f438521dc7a041043530a8ef"
+        }
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "runner": "ubuntu-22.04",
+      "artifacts": [
+        {
+          "name": "kani-latest-x86_64-unknown-linux-gnu.tar.gz",
+          "sha256": "b8ef05fa132a2d24adad9206e69f3bfa80c9108dd5c3e83495b0f7c2ba2f876f"
+        },
+        {
+          "name": "x86_64-unknown-linux-gnu-kani-verifier.crate",
+          "sha256": "35f5ca813caa2358150fa9417f06cc9d243f3f21f438521dc7a041043530a8ef"
+        }
+      ]
+    }
+  }
+}
