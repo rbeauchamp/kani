@@ -43,7 +43,7 @@ with risky surfaces excluded or made fail-closed.
       candidate record.
 - [x] Review public wording for technical accuracy, gratitude, neutrality,
       confidentiality, and absence of implied upstream endorsement.
-- [ ] Commit and push the bootstrap branch after local checks.
+- [x] Commit and push the bootstrap branch after local checks.
 
 Exit gate: public documentation is internally consistent, respectful, linked,
 confidentiality-safe, and bound to the recorded baseline.
