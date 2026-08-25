@@ -120,5 +120,5 @@ diagnostic ledger. A change to any of those inputs requires requalification.
 
 The release is marked as a GitHub prerelease because the broader public stable
 promotion roadmap, including a public corpus, SBOM, and independent public
-review, is not complete. The prerelease is nevertheless immutable and usable
+review, is not complete. The prerelease is nevertheless checksum-bound and usable
 for controlled adopters that satisfy their own acceptance gate.
