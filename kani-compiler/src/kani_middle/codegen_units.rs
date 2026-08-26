@@ -113,6 +113,19 @@ impl CodegenUnits {
                     *kani_fns.get(&KaniModel::Any.into()).unwrap(),
                     *kani_fns.get(&KaniModel::BoundedAny.into()).unwrap(),
                     SmartPointerModels::from_kani_functions(kani_fns),
+                    // Require *all three* unbounded models: eligibility admits `&[T]`, `&mut [T]`
+                    // and `Vec<T>`, but generation resolves each model independently, so gating on
+                    // only one could report a `&mut [T]`/`Vec<T>` arg as unbounded-verified while
+                    // generation silently fell back to a bounded (or unsupported) path. They are
+                    // defined together (all present with `alloc`, all absent in `no_core`), so this
+                    // is all-or-nothing in practice; the conjunction just makes that explicit.
+                    [
+                        KaniModel::AnySliceRefUnbounded,
+                        KaniModel::AnySliceMutUnbounded,
+                        KaniModel::AnyVecUnbounded,
+                    ]
+                    .iter()
+                    .all(|m| kani_fns.contains_key(&(*m).into())),
                 );
                 AUTOHARNESS_MD
                     .set(AutoHarnessMetadata {
@@ -206,7 +219,7 @@ impl CodegenUnits {
 }
 
 fn stub_def(tcx: TyCtxt, def_id: DefId) -> FnDef {
-    let ty_internal = tcx.type_of(def_id).instantiate_identity();
+    let ty_internal = tcx.type_of(def_id).instantiate_identity().skip_normalization();
     let ty = rustc_internal::stable(ty_internal);
     if let TyKind::RigidTy(RigidTy::FnDef(def, _)) = ty.kind() {
         def
@@ -373,13 +386,13 @@ fn determine_targets(
 /// the AutomaticHarnessPass will later transform the bodies of these instances to actually verify the function.
 fn get_all_automatic_harnesses(
     tcx: TyCtxt,
-    verifiable_fns: Vec<(Instance, bool)>,
+    verifiable_fns: Vec<(Instance, AutoHarnessCaveats)>,
     kani_harness_intrinsic: FnDef,
     base_filename: &Path,
 ) -> HashMap<Harness, HarnessMetadata> {
     verifiable_fns
         .into_iter()
-        .map(|(fn_to_verify, is_bounded)| {
+        .map(|(fn_to_verify, caveats)| {
             // Set the generic arguments of the harness to be the function it is verifying
             // so that later, in AutomaticHarnessPass, we can retrieve the function to verify
             // and generate the harness body accordingly.
@@ -393,7 +406,8 @@ fn get_all_automatic_harnesses(
                 base_filename,
                 &fn_to_verify,
                 harness.mangled_name(),
-                is_bounded,
+                caveats.is_bounded,
+                caveats.is_ctor_based,
             );
             (harness, metadata)
         })
@@ -481,7 +495,8 @@ fn impl_derived_candidates(tcx: TyCtxt, def: FnDef) -> FxHashMap<usize, Vec<Ty>>
             let slot = candidates.entry(param_ty.index as usize).or_default();
             for impls in tcx.trait_impls_of(trait_pred.def_id()).non_blanket_impls().values() {
                 for &impl_def_id in impls {
-                    let self_ty = tcx.type_of(impl_def_id).instantiate_identity();
+                    let self_ty =
+                        tcx.type_of(impl_def_id).instantiate_identity().skip_normalization();
                     // Only fully concrete self types can be substituted directly.
                     if rustc_middle::ty::TypeVisitableExt::has_param(&self_ty) {
                         continue;
@@ -514,7 +529,12 @@ fn args_satisfy_predicates(tcx: TyCtxt, def: FnDef, args: &GenericArgs) -> bool 
     let args_internal = rustc_internal::internal(tcx, args);
     let predicates = tcx.predicates_of(def_id).instantiate(tcx, args_internal);
     for (predicate, _span) in predicates {
-        ocx.register_obligation(Obligation::new(tcx, cause.clone(), param_env, predicate));
+        ocx.register_obligation(Obligation::new(
+            tcx,
+            cause.clone(),
+            param_env,
+            predicate.skip_normalization(),
+        ));
     }
     ocx.evaluate_obligations_error_on_ambiguity().is_empty()
 }
@@ -659,6 +679,16 @@ fn choose_generic_instantiation(tcx: TyCtxt, fn_item: CrateItem) -> Result<Insta
     ))
 }
 
+/// The caveats that apply to a generated harness, reported in the summary table and stored in
+/// its metadata. They are independent: a harness can be both bounded and constructor-based.
+#[derive(Clone, Copy, Debug, Default)]
+struct AutoHarnessCaveats {
+    /// Some argument uses *bounded* nondeterministic values, c.f. `--bounded-arguments`.
+    is_bounded: bool,
+    /// Some value is generated through a type's public constructor, c.f. `--constructor-args`.
+    is_ctor_based: bool,
+}
+
 /// Partition every function in the crate into (chosen, skipped), where `chosen` is a vector of the Instances for which we'll generate automatic harnesses,
 /// and `skipped` is a map of function names to the reason why we skipped them.
 fn automatic_harness_partition(
@@ -668,7 +698,8 @@ fn automatic_harness_partition(
     kani_any_def: FnDef,
     kani_bounded_any_def: FnDef,
     smart_pointer_models: SmartPointerModels,
-) -> (Vec<(Instance, bool)>, BTreeMap<String, AutoHarnessSkipReason>) {
+    unbounded_slice_available: bool,
+) -> (Vec<(Instance, AutoHarnessCaveats)>, BTreeMap<String, AutoHarnessSkipReason>) {
     let crate_fn_defs = rustc_public::local_crate().fn_defs().into_iter().collect::<FxHashSet<_>>();
     // Filter out CrateItems that are functions, but not functions defined in the crate itself, i.e., rustc-inserted functions
     // (c.f. https://github.com/model-checking/kani/issues/4189)
@@ -685,6 +716,9 @@ fn automatic_harness_partition(
 
     // Cache whether a type implements or can derive Arbitrary
     let mut ty_arbitrary_cache: FxHashMap<Ty, bool> = FxHashMap::default();
+    // The constructor search needs the same predicate, but `skip_reason` borrows the cache above
+    // for the whole loop, so give the `--constructor-args` check its own.
+    let mut ty_arbitrary_cache_ctor: FxHashMap<Ty, bool> = FxHashMap::default();
 
     // If `instance` is not eligible for an automatic harness, return the reason why (`Err`); if it
     // is eligible, return whether its harness requires *bounded* nondeterministic arguments
@@ -746,6 +780,26 @@ fn automatic_harness_partition(
         let mut problematic_args = vec![];
         let mut bounded_args = vec![];
         for (idx, arg) in body.arg_locals().iter().enumerate() {
+            // Unbounded generation: slices (&[T], &mut [T]) and Vec<T> of primitive
+            // integer/float elements are generated as fresh allocations of nondeterministic
+            // size (results hold for *all* lengths -- unbounded, so no bound caveat), when the
+            // optional alloc-requiring models are present. This takes precedence over the
+            // bounded slice/string support classified by `autoharness_supported_arg_ty`.
+            if unbounded_slice_available {
+                let slice_ok = match arg.ty.kind() {
+                    TyKind::RigidTy(RigidTy::Ref(_, inner, _)) => match inner.kind() {
+                        TyKind::RigidTy(RigidTy::Slice(elem)) => {
+                            crate::kani_middle::slice_elem_unbounded_ok(tcx, elem)
+                        }
+                        _ => false,
+                    },
+                    _ => crate::kani_middle::vec_elem_ty(arg.ty)
+                        .is_some_and(|elem| crate::kani_middle::slice_elem_unbounded_ok(tcx, elem)),
+                };
+                if slice_ok {
+                    continue;
+                }
+            }
             // Note: we deliberately do not insert the verdict into `ty_arbitrary_cache` here.
             // The cache stores whether a type implements (or can derive) Arbitrary, which is the
             // wrong semantics for types that are supported in argument position only (raw
@@ -825,7 +879,23 @@ fn automatic_harness_partition(
                 skipped
                     .insert(crate::kani_middle::strip_local_crate_prefix(instance.name()), reason);
             }
-            Ok(is_bounded) => chosen.push((instance, is_bounded)),
+            Ok(is_bounded) => {
+                // Whether any generated value will come from a type's public constructor
+                // rather than raw field synthesis, which the summary reports as "(ctor)".
+                let is_ctor_based = args.autoharness_constructor_args
+                    && instance.body().is_some_and(|body| {
+                        body.arg_locals().iter().any(|arg| {
+                            crate::kani_middle::uses_ctor_generation(
+                                tcx,
+                                arg.ty,
+                                kani_any_def,
+                                &mut ty_arbitrary_cache_ctor,
+                                &mut vec![],
+                            )
+                        })
+                    });
+                chosen.push((instance, AutoHarnessCaveats { is_bounded, is_ctor_based }));
+            }
         }
     }
 
