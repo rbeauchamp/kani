@@ -1,0 +1,73 @@
+{
+  "schema": 1,
+  "distribution": {
+    "name": "Kani core-v1 controlled-use distribution",
+    "official_upstream_release": false,
+    "release_kind": "github-prerelease",
+    "tag": "qualified-0.67.0+20260825.1",
+    "version": "0.67.0+qualified.20260825.1"
+  },
+  "source": {
+    "repository": "https://github.com/model-checking/kani",
+    "commit": "4f7baae414d596eaa82ee90ee529f9957ca565dd",
+    "tree": "eff9f33ba2a79a3c815ba58080ccd3395955a88d"
+  },
+  "upstream_build": {
+    "workflow": "Release Bundle",
+    "run_id": 32815085848,
+    "run_url": "https://github.com/model-checking/kani/actions/runs/32815085848",
+    "head_sha": "4f7baae414d596eaa82ee90ee529f9957ca565dd",
+    "conclusion": "success"
+  },
+  "artifacts": [
+    {
+      "kind": "kani-bundle",
+      "platform": "aarch64-apple-darwin",
+      "upstream_name": "kani-latest-aarch64-apple-darwin.tar.gz",
+      "release_name": "kani-0.67.0+qualified.20260825.1-aarch64-apple-darwin.tar.gz",
+      "size": 105197910,
+      "sha256": "4f923fc786f38b830535a4cfddd3714ade173461f82dc85f84eabfecc8fb857a"
+    },
+    {
+      "kind": "kani-bundle",
+      "platform": "x86_64-unknown-linux-gnu",
+      "upstream_name": "kani-latest-x86_64-unknown-linux-gnu.tar.gz",
+      "release_name": "kani-0.67.0+qualified.20260825.1-x86_64-unknown-linux-gnu.tar.gz",
+      "size": 142436693,
+      "sha256": "b8ef05fa132a2d24adad9206e69f3bfa80c9108dd5c3e83495b0f7c2ba2f876f"
+    },
+    {
+      "kind": "kani-verifier-installer-source",
+      "platform": "platform-independent-source",
+      "upstream_name": "aarch64-apple-darwin-kani-verifier.crate",
+      "release_name": "kani-verifier-0.67.0-4f7baae.crate",
+      "size": 29215,
+      "sha256": "35f5ca813caa2358150fa9417f06cc9d243f3f21f438521dc7a041043530a8ef"
+    }
+  ],
+  "toolchain": {
+    "cargo_kani": "Kani Rust Verifier 0.67.0 (4f7baae) (cargo plugin)",
+    "rustc": "1.96.0-nightly (48cc71ee8 2026-03-31)",
+    "llvm": "22.1.2",
+    "cbmc": "6.10.0 (cbmc-6.10.0)",
+    "kissat": "4.0.1"
+  },
+  "qualification": {
+    "profile": "core-v1",
+    "profile_path": "qualification/profiles/core-v1.md",
+    "gate_path": "qualification/scripts/core_v1_gate.py",
+    "gate_sha256": "1b9abceb016630715ddd267120b00f5ad4e9d4da2064fda9724fa9a627dd28bd",
+    "scope_path": "qualification/releases/qualified-0.67.0+20260825.1/release-scope.md"
+  },
+  "redistribution": {
+    "content_changed": false,
+    "filenames_changed": true,
+    "statement": "Upstream-built artifacts were renamed for this release without changing their bytes."
+  },
+  "limitations": [
+    "This is an unofficial downstream distribution and is not endorsed by the upstream Kani team.",
+    "Qualification is limited to the declared core-v1 profile and two named platforms.",
+    "No SBOM or SLSA attestation is asserted by this provenance record.",
+    "Application-specific manifests and receipts are not public distribution artifacts."
+  ]
+}

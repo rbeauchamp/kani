@@ -18,6 +18,7 @@ gitmodules
 ignore
 kani-dependencies
 requirements.txt
+SHA256SUMS(\.asc)?$
 scripts/ci/copyright-exclude
 tests/remote-target-lists/.*
 tools/build-kani/license-notes.txt
