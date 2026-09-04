@@ -97,13 +97,13 @@ pub fn discover_tool_binary(kani_bin: &Path, tool_name: &str) -> Result<PathBuf,
     // 3. Check default user kani install directory ~/.kani/kani-*/bin/<tool_name>
     if let Some(home_dir) = std::env::var_os("HOME").map(PathBuf::from) {
         let dot_kani = home_dir.join(".kani");
-        if dot_kani.is_dir() {
-            if let Ok(entries) = fs::read_dir(&dot_kani) {
-                for entry in entries.flatten() {
-                    let candidate = entry.path().join("bin").join(tool_name);
-                    if candidate.is_file() {
-                        return Ok(candidate);
-                    }
+        if dot_kani.is_dir()
+            && let Ok(entries) = fs::read_dir(&dot_kani)
+        {
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("bin").join(tool_name);
+                if candidate.is_file() {
+                    return Ok(candidate);
                 }
             }
         }
@@ -139,24 +139,23 @@ pub fn resolve_runtime_tools(kani_bin: &Path) -> Result<ResolvedTools, String> {
     let mut cargo_kani_version = String::from_utf8_lossy(&cargo_kani_out.stdout).trim().to_string();
 
     // If cargo-kani is the dev wrapper or launcher returning a single line, check kani-driver with arg0
-    if cargo_kani_version.starts_with("cargo-kani ") {
-        if let Some(parent) = kani_path.parent() {
-            let driver = parent.join("kani-driver");
-            if driver.is_file() {
-                #[cfg(unix)]
+    if cargo_kani_version.starts_with("cargo-kani ")
+        && let Some(parent) = kani_path.parent()
+    {
+        let driver = parent.join("kani-driver");
+        if driver.is_file() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                if let Ok(driver_out) = Command::new(&driver)
+                    .arg0("cargo-kani")
+                    .arg("--version")
+                    .arg("--verbose")
+                    .output()
                 {
-                    use std::os::unix::process::CommandExt;
-                    if let Ok(driver_out) = Command::new(&driver)
-                        .arg0("cargo-kani")
-                        .arg("--version")
-                        .arg("--verbose")
-                        .output()
-                    {
-                        let driver_str =
-                            String::from_utf8_lossy(&driver_out.stdout).trim().to_string();
-                        if driver_str.contains("Kani Rust Verifier") {
-                            cargo_kani_version = driver_str;
-                        }
+                    let driver_str = String::from_utf8_lossy(&driver_out.stdout).trim().to_string();
+                    if driver_str.contains("Kani Rust Verifier") {
+                        cargo_kani_version = driver_str;
                     }
                 }
             }
@@ -266,7 +265,7 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
         format!("failed to create snapshot fixtures dir {}: {e}", snapshot_fixtures.display())
     })?;
 
-    for (name, _) in &fixture_hashes {
+    for name in fixture_hashes.keys() {
         let src = ctx.fixtures_dir.join(name);
         let dst = snapshot_fixtures.join(name);
         fs::copy(&src, &dst)
@@ -283,7 +282,7 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
 
     // 4. Hash snapshot files and verify match with pre-run digests
     let mut snapshot_hashes = BTreeMap::new();
-    for (name, _) in &fixture_hashes {
+    for name in fixture_hashes.keys() {
         let path = snapshot_fixtures.join(name);
         let hash = sha256_file(&path).map_err(|e| e.to_string())?;
         snapshot_hashes.insert(name.clone(), hash);

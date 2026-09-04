@@ -54,10 +54,10 @@ impl ParsedOutput {
     pub fn observed_unreachable_map(&self) -> BTreeMap<String, u32> {
         let mut map = BTreeMap::new();
         for (name, h) in &self.harnesses {
-            if let Some(u) = h.unreachable {
-                if u > 0 {
-                    map.insert(name.clone(), u);
-                }
+            if let Some(u) = h.unreachable
+                && u > 0
+            {
+                map.insert(name.clone(), u);
             }
         }
         map
