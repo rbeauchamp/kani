@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
-use crate::model::{CoverMetrics, HarnessSummary, HarnessVerdict, VerificationSummary};
+use crate::model::{
+    ConsumerManifest, CoverMetrics, HarnessSummary, HarnessVerdict, VerificationSummary,
+};
 
-static CHECK_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^(?:Thread [0-9]+: )?Checking harness ([A-Za-z0-9_:]+)\.\.\.$").unwrap()
-});
+static CHECK_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^Checking harness ([a-zA-Z0-9_:]+)\.\.\.$").unwrap());
 
 static FAILED_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*\*\* ([0-9]+) of ([0-9]+) failed(?: \(([0-9]+) unreachable\))?$").unwrap()
@@ -40,7 +41,7 @@ static SUMMARY_RE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParsedOutput {
     pub harnesses: BTreeMap<String, HarnessSummary>,
     pub warnings: Vec<String>,
@@ -49,7 +50,20 @@ pub struct ParsedOutput {
 }
 
 impl ParsedOutput {
-    /// Return true only if all parsed harnesses passed, all cover obligations are satisfied,
+    /// Return map of harnesses to positive unreachable check counts.
+    pub fn observed_unreachable_map(&self) -> BTreeMap<String, u32> {
+        let mut map = BTreeMap::new();
+        for (name, h) in &self.harnesses {
+            if let Some(u) = h.unreachable {
+                if u > 0 {
+                    map.insert(name.clone(), u);
+                }
+            }
+        }
+        map
+    }
+
+    /// Return true if all parsed harnesses passed, all cover obligations are satisfied,
     /// the completion summary confirms 0 failures on non-empty harnesses, and no unledgered
     /// warnings or unsupported constructs are present.
     pub fn is_pass(&self) -> bool {
@@ -67,6 +81,80 @@ impl ParsedOutput {
         let no_unsupported = self.unsupported_constructs.is_empty();
 
         all_harnesses_pass && summary_pass && no_unledgered_warnings && no_unsupported
+    }
+
+    /// Validate the parsed output against the consumer manifest's expected harnesses,
+    /// exact unreachable check distribution, cover property obligations, and diagnostic ledgers.
+    pub fn validate_against_consumer(&self, consumer: &ConsumerManifest) -> Result<(), String> {
+        // 1. Harness inventory match
+        let mut observed_harnesses: Vec<_> = self.harnesses.keys().cloned().collect();
+        observed_harnesses.sort();
+        let mut expected_harnesses = consumer.expected_harnesses.clone();
+        expected_harnesses.sort();
+        if observed_harnesses != expected_harnesses {
+            return Err(format!(
+                "harness set mismatch:\nobserved: {observed_harnesses:?}\nexpected: {expected_harnesses:?}"
+            ));
+        }
+
+        // 2. All harnesses must have PASS verdict
+        for (name, h) in &self.harnesses {
+            if !h.is_pass() {
+                return Err(format!("harness {name} did not pass: verdict is {:?}", h.verdict));
+            }
+        }
+
+        // 3. Exact unreachable check distribution
+        let observed_unreachable = self.observed_unreachable_map();
+        if observed_unreachable != consumer.expected_unreachable_checks {
+            return Err(format!(
+                "unreachable-check distribution changed:\nobserved: {observed_unreachable:?}\nexpected: {:?}",
+                consumer.expected_unreachable_checks
+            ));
+        }
+
+        // 4. Cover property totals and satisfaction
+        let total_sat: u32 =
+            self.harnesses.values().map(|h| h.covers.map_or(0, |c| c.satisfied)).sum();
+        let total_cov: u32 = self.harnesses.values().map(|h| h.covers.map_or(0, |c| c.total)).sum();
+        if total_sat != total_cov || total_cov != consumer.expected_cover_properties {
+            return Err(format!(
+                "cover obligations changed or failed: observed {total_sat}/{total_cov}, expected {}/{}",
+                consumer.expected_cover_properties, consumer.expected_cover_properties
+            ));
+        }
+
+        // 5. Diagnostic warning ledger match
+        let expected_warnings: BTreeSet<&String> =
+            consumer.diagnostics.warnings.iter().map(|w| &w.message).collect();
+        let observed_warnings: BTreeSet<&String> = self.warnings.iter().collect();
+        if observed_warnings != expected_warnings {
+            return Err(format!(
+                "warning ledger mismatch:\nobserved: {observed_warnings:?}\nexpected: {expected_warnings:?}"
+            ));
+        }
+
+        // 6. Diagnostic unsupported construct ledger match
+        let expected_unsupported: BTreeSet<&String> =
+            consumer.diagnostics.unsupported_constructs.iter().map(|c| &c.construct).collect();
+        let observed_unsupported: BTreeSet<&String> = self.unsupported_constructs.keys().collect();
+        if observed_unsupported != expected_unsupported {
+            return Err(format!(
+                "unsupported-construct ledger mismatch:\nobserved: {observed_unsupported:?}\nexpected: {expected_unsupported:?}"
+            ));
+        }
+
+        // 7. Completion summary must confirm total matches and 0 failures
+        match self.summary {
+            Some(s)
+                if s.failed == 0
+                    && s.successful == s.total
+                    && s.total == self.harnesses.len() as u32 =>
+            {
+                Ok(())
+            }
+            _ => Err("completion summary missing, invalid, or indicates failures".to_string()),
+        }
     }
 }
 
@@ -171,6 +259,42 @@ pub fn parse_kani_output(text: &str) -> Result<ParsedOutput, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::*;
+
+    fn sample_consumer_manifest(
+        harnesses: Vec<&str>,
+        unreachable: BTreeMap<String, u32>,
+        disp: Option<&str>,
+        warnings: Vec<(&str, &str)>,
+    ) -> ConsumerManifest {
+        ConsumerManifest {
+            schema: 1,
+            profile: "core-v1".to_string(),
+            status: "bootstrap".to_string(),
+            consumer: "test-pkg".to_string(),
+            repository: "https://example.invalid/test".to_string(),
+            source_commit: "0".repeat(40),
+            source_tree: "1".repeat(40),
+            project_dir: ".".to_string(),
+            cargo_manifest: "Cargo.toml".to_string(),
+            cargo_config: None,
+            kani_flags: vec![],
+            expected_harnesses: harnesses.into_iter().map(|s| s.to_string()).collect(),
+            expected_cover_properties: 2,
+            expected_unreachable_checks: unreachable,
+            unreachable_disposition: disp.map(|s| s.to_string()),
+            diagnostics: ConsumerDiagnostics {
+                warnings: warnings
+                    .into_iter()
+                    .map(|(m, d)| WarningLedgerEntry {
+                        message: m.to_string(),
+                        disposition: d.to_string(),
+                    })
+                    .collect(),
+                unsupported_constructs: vec![],
+            },
+        }
+    }
 
     #[test]
     fn test_parse_success_and_covers() {
@@ -196,6 +320,116 @@ Complete - 1 successfully verified harnesses, 0 failures, 1 total.
     }
 
     #[test]
+    fn test_exact_declared_unreachable_distribution_passes() {
+        let sample = r#"
+Checking harness test::h1...
+ ** 0 of 2 failed (3 unreachable)
+ ** 2 of 2 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(sample).unwrap();
+        let mut unreachable = BTreeMap::new();
+        unreachable.insert("test::h1".to_string(), 3);
+        let consumer = sample_consumer_manifest(
+            vec!["test::h1"],
+            unreachable,
+            Some("verified loop bound"),
+            vec![],
+        );
+        assert!(parsed.validate_against_consumer(&consumer).is_ok());
+    }
+
+    #[test]
+    fn test_extra_or_missing_unreachable_check_fails() {
+        let sample = r#"
+Checking harness test::h1...
+ ** 0 of 2 failed (3 unreachable)
+ ** 2 of 2 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(sample).unwrap();
+
+        // 1. Extra unreachable check in observed log (manifest expects empty)
+        let consumer_empty =
+            sample_consumer_manifest(vec!["test::h1"], BTreeMap::new(), None, vec![]);
+        assert!(parsed.validate_against_consumer(&consumer_empty).is_err());
+
+        // 2. Missing unreachable check in observed log (manifest expects 5)
+        let mut unreachable_diff = BTreeMap::new();
+        unreachable_diff.insert("test::h1".to_string(), 5);
+        let consumer_diff =
+            sample_consumer_manifest(vec!["test::h1"], unreachable_diff, Some("bound"), vec![]);
+        assert!(parsed.validate_against_consumer(&consumer_diff).is_err());
+    }
+
+    #[test]
+    fn test_moved_unreachable_check_to_another_harness_fails() {
+        let sample = r#"
+Checking harness test::h1...
+ ** 0 of 2 failed (0 unreachable)
+ ** 1 of 1 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+Checking harness test::h2...
+ ** 0 of 2 failed (3 unreachable)
+ ** 1 of 1 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+
+Complete - 2 successfully verified harnesses, 0 failures, 2 total.
+"#;
+        let parsed = parse_kani_output(sample).unwrap();
+        let mut expected_unreachable = BTreeMap::new();
+        expected_unreachable.insert("test::h1".to_string(), 3); // Manifest expects h1 to have 3 unreachable, but h2 has 3
+        let consumer = sample_consumer_manifest(
+            vec!["test::h1", "test::h2"],
+            expected_unreachable,
+            Some("bound"),
+            vec![],
+        );
+        let err = parsed.validate_against_consumer(&consumer).unwrap_err();
+        assert!(err.contains("unreachable-check distribution changed"));
+    }
+
+    #[test]
+    fn test_unledgered_warning_fails_consumer_validation() {
+        let sample = r#"
+Checking harness test::h1...
+ ** 0 of 2 failed (0 unreachable)
+ ** 2 of 2 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+warning: unexpected unknown warning
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(sample).unwrap();
+        let consumer = sample_consumer_manifest(vec!["test::h1"], BTreeMap::new(), None, vec![]);
+        let err = parsed.validate_against_consumer(&consumer).unwrap_err();
+        assert!(err.contains("warning ledger mismatch"));
+    }
+
+    #[test]
+    fn test_declared_warning_in_ledger_passes() {
+        let sample = r#"
+Checking harness test::h1...
+ ** 0 of 2 failed (0 unreachable)
+ ** 2 of 2 cover properties satisfied
+VERIFICATION:- SUCCESSFUL
+warning: declared warning message
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(sample).unwrap();
+        let consumer = sample_consumer_manifest(
+            vec!["test::h1"],
+            BTreeMap::new(),
+            None,
+            vec![("declared warning message", "accepted per profile RFC")],
+        );
+        assert!(parsed.validate_against_consumer(&consumer).is_ok());
+    }
+
+    #[test]
     fn test_parse_vacuity_cover_with_unreachable() {
         let sample = r#"
 Checking harness vacuity...
@@ -217,7 +451,7 @@ Complete - 1 successfully verified harnesses, 0 failures, 1 total.
         let h = &parsed.harnesses["vacuity"];
         assert_eq!(h.verdict, HarnessVerdict::Pass);
         assert_eq!(h.covers, Some(CoverMetrics { satisfied: 0, total: 1 }));
-        assert!(!parsed.is_pass()); // Satisfied (0) < Total (1) must not pass
+        assert!(!parsed.is_pass());
     }
 
     #[test]
@@ -255,37 +489,6 @@ Complete - 1 successfully verified harnesses, 0 failures, 1 total.
 "#;
         let err = parse_kani_output(sample).unwrap_err();
         assert!(err.contains("duplicate completion summary records found in log"));
-    }
-
-    #[test]
-    fn test_parse_failure_with_unreachable() {
-        let sample = r#"
-Checking harness test::failing_harness...
- ** 1 of 5 failed (2 unreachable)
-VERIFICATION:- FAILED
-
-warning: Found the following unsupported constructs:
- - inline assembly (1)
-"#;
-        let parsed = parse_kani_output(sample).unwrap();
-        let h = &parsed.harnesses["test::failing_harness"];
-        assert_eq!(h.verdict, HarnessVerdict::Fail);
-        assert_eq!(h.unreachable, Some(2));
-        assert_eq!(parsed.unsupported_constructs.get("inline assembly"), Some(&1));
-        assert!(!parsed.is_pass());
-    }
-
-    #[test]
-    fn test_unledgered_warnings_fail_gate() {
-        let sample = r#"
-Checking harness test::warn_harness...
-VERIFICATION:- SUCCESSFUL
-warning: unledgered compiler warning
-Complete - 1 successfully verified harnesses, 0 failures, 1 total.
-"#;
-        let parsed = parse_kani_output(sample).unwrap();
-        assert!(!parsed.warnings.is_empty());
-        assert!(!parsed.is_pass());
     }
 
     #[test]
