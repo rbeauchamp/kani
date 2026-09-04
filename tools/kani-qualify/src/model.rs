@@ -4,14 +4,43 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum GateStatus {
     Pass,
     Fail,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessVerdict {
+    Pass,
+    Fail,
+}
+
+impl std::fmt::Display for HarnessVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HarnessVerdict::Pass => write!(f, "PASS"),
+            HarnessVerdict::Fail => write!(f, "FAIL"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoverMetrics {
+    pub satisfied: u32,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationSummary {
+    pub successful: u32,
+    pub failed: u32,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProbeResult {
     pub detected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -30,6 +59,16 @@ pub struct ProbeResult {
     pub truncated_output_sha256: Option<String>,
 }
 
+impl ProbeResult {
+    pub fn new(detected: bool, failure_evidence: &str) -> Self {
+        Self {
+            detected,
+            evidence: (!detected).then(|| failure_evidence.to_string()),
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationReceipt {
     pub schema: u32,
@@ -44,22 +83,34 @@ pub struct MutationReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolchainManifest {
     pub schema: Option<u32>,
+    #[serde(alias = "cargo_kani_version")]
     pub kani: Option<String>,
     pub rustc: Option<String>,
+    #[serde(alias = "cbmc_version")]
     pub cbmc: Option<String>,
+    #[serde(alias = "kissat_version")]
     pub kissat: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HarnessSummary {
     pub harness: String,
-    pub successful: bool,
-    pub failed: bool,
+    pub verdict: HarnessVerdict,
     pub unreachable: Option<u32>,
-    pub covers_satisfied: Option<u32>,
-    pub covers_total: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub covers: Option<CoverMetrics>,
+}
+
+impl HarnessSummary {
+    pub fn is_pass(&self) -> bool {
+        self.verdict == HarnessVerdict::Pass
+    }
+
+    pub fn is_fail(&self) -> bool {
+        self.verdict == HarnessVerdict::Fail
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,4 +124,40 @@ pub struct CompositeReceipt {
     pub harnesses: BTreeMap<String, HarnessSummary>,
     pub warnings: Vec<String>,
     pub unsupported_constructs: BTreeMap<String, u32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_toolchain_manifest_aliases() {
+        let sample = r#"{
+            "schema": 1,
+            "profile": "core-v1",
+            "cargo_kani_version": "0.67.0",
+            "cbmc_version": "6.10.0 (cbmc-6.10.0)",
+            "kissat_version": "4.0.1"
+        }"#;
+        let manifest: ToolchainManifest = serde_json::from_str(sample).unwrap();
+        assert_eq!(manifest.schema, Some(1));
+        assert_eq!(manifest.kani.as_deref(), Some("0.67.0"));
+        assert_eq!(manifest.cbmc.as_deref(), Some("6.10.0 (cbmc-6.10.0)"));
+        assert_eq!(manifest.kissat.as_deref(), Some("4.0.1"));
+    }
+
+    #[test]
+    fn test_harness_summary_verdict_roundtrip() {
+        let h = HarnessSummary {
+            harness: "test::h".to_string(),
+            verdict: HarnessVerdict::Pass,
+            unreachable: Some(0),
+            covers: Some(CoverMetrics { satisfied: 2, total: 2 }),
+        };
+        let serialized = serde_json::to_string(&h).unwrap();
+        let deserialized: HarnessSummary = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.verdict, HarnessVerdict::Pass);
+        assert!(deserialized.is_pass());
+        assert!(!deserialized.is_fail());
+    }
 }

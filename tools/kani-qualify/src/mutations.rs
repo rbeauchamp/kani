@@ -8,14 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::gate::{run_with_timeout, sha256_file};
+use crate::gate::{current_iso_timestamp, run_with_timeout, sha256_file};
 use crate::model::{GateStatus, MutationReceipt, ProbeResult, ToolchainManifest};
 use crate::parser::parse_kani_output;
 
 pub fn hash_bytes(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    format!("{:x}", Sha256::digest(data))
 }
 
 pub struct MutationContext<'a> {
@@ -28,33 +26,26 @@ pub struct MutationContext<'a> {
 pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, String> {
     let mut results = BTreeMap::new();
 
-    // 1. Inadequate unwind probe
+    // 1. Inadequate unwind probe: must fail specifically due to unwinding assertion
     let inadequate_path = ctx.fixtures_dir.join("inadequate_unwind.rs");
     let mut cmd = Command::new(&ctx.kani_bin);
     cmd.arg(&inadequate_path).arg("--output-format=terse");
     let inadequate = run_with_timeout(cmd, Duration::from_secs(120))?;
-    let ineq_detected = !inadequate.status.success()
-        && (inadequate.stdout.contains("unwinding assertion")
-            || inadequate.stdout.contains("VERIFICATION:- FAILED"));
+    let ineq_detected =
+        !inadequate.status.success() && inadequate.stdout.contains("unwinding assertion");
     results.insert(
         "inadequate_unwind".to_string(),
         ProbeResult {
-            detected: ineq_detected,
-            evidence: if ineq_detected {
-                None
-            } else {
-                Some("failed to detect inadequate unwind".to_string())
-            },
             returncode: inadequate.status.code(),
-            kani_returncode: None,
-            positive_control_returncode: None,
             output_sha256: Some(hash_bytes(inadequate.stdout.as_bytes())),
-            complete_output_sha256: None,
-            truncated_output_sha256: None,
+            ..ProbeResult::new(
+                ineq_detected,
+                "failed to detect inadequate unwind via unwinding assertion",
+            )
         },
     );
 
-    // 2. Vacuity probe
+    // 2. Vacuity probe: fail-closed (parser errors or verifier crashes are NOT detections)
     let vacuity_path = ctx.fixtures_dir.join("vacuity.rs");
     let mut cmd = Command::new(&ctx.kani_bin);
     cmd.arg(&vacuity_path).arg("--output-format=terse");
@@ -62,35 +53,24 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
     let parsed_vacuity = parse_kani_output(&vacuity.stdout);
     let vacuity_detected = match parsed_vacuity {
         Ok(parsed) => {
-            // Vacuity harness has assume(false); cover!(true); assert!(false);
-            // In terse format, cover should fail/be unsatisfied or verification should fail
             let cover_failed = parsed
                 .harnesses
                 .values()
-                .any(|h| h.covers_satisfied.unwrap_or(0) == 0 && h.covers_total.unwrap_or(0) > 0);
-            cover_failed || vacuity.stdout.contains("UNSATISFIED") || !vacuity.status.success()
+                .any(|h| h.covers.map_or(false, |c| c.satisfied < c.total));
+            cover_failed || vacuity.stdout.contains("UNSATISFIED")
         }
-        Err(_) => true,
+        Err(_) => false, // Fail-closed: parse failure is not vacuity detection
     };
     results.insert(
         "vacuity".to_string(),
         ProbeResult {
-            detected: vacuity_detected,
-            evidence: if vacuity_detected {
-                None
-            } else {
-                Some("vacuity was not detected".to_string())
-            },
-            returncode: None,
             kani_returncode: vacuity.status.code(),
-            positive_control_returncode: None,
             output_sha256: Some(hash_bytes(vacuity.stdout.as_bytes())),
-            complete_output_sha256: None,
-            truncated_output_sha256: None,
+            ..ProbeResult::new(vacuity_detected, "vacuity was not detected")
         },
     );
 
-    // 3. Timeout probe
+    // 3. Timeout probe: child process termination
     let mut sleep_cmd = Command::new("sleep");
     sleep_cmd.arg("5");
     let timeout_result = run_with_timeout(sleep_cmd, Duration::from_millis(200));
@@ -100,85 +80,67 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
     };
     results.insert(
         "timeout".to_string(),
-        ProbeResult {
-            detected: timeout_detected,
-            evidence: if timeout_detected {
-                None
-            } else {
-                Some("timeout probe did not trigger timeout".to_string())
-            },
-            returncode: None,
-            kani_returncode: None,
-            positive_control_returncode: None,
-            output_sha256: None,
-            complete_output_sha256: None,
-            truncated_output_sha256: None,
-        },
+        ProbeResult::new(timeout_detected, "timeout probe did not trigger timeout"),
     );
 
-    // 4. Parser truncation probe
+    // 4. Parser truncation probe: truncated logs missing summary must be detected
     let probe_path = ctx.fixtures_dir.join("backend_probe.rs");
     let mut cmd = Command::new(&ctx.kani_bin);
     cmd.arg(&probe_path).arg("--output-format=terse");
     let positive = run_with_timeout(cmd, Duration::from_secs(120))?;
     let positive_code = positive.status.code();
     let complete_stdout = positive.stdout;
-    let truncated_stdout = complete_stdout.split("Complete -").next().unwrap_or("").to_string();
-    let parsed_truncated = parse_kani_output(&truncated_stdout);
+    let truncated_stdout = complete_stdout.split("Complete -").next().unwrap_or("");
+    let parsed_truncated = parse_kani_output(truncated_stdout);
     let truncation_detected =
         parsed_truncated.is_err() || parsed_truncated.unwrap().summary.is_none();
     results.insert(
         "parser_truncation".to_string(),
         ProbeResult {
-            detected: truncation_detected,
-            evidence: if truncation_detected {
-                None
-            } else {
-                Some("truncated output was accepted".to_string())
-            },
-            returncode: None,
-            kani_returncode: None,
             positive_control_returncode: positive_code,
-            output_sha256: None,
             complete_output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
             truncated_output_sha256: Some(hash_bytes(truncated_stdout.as_bytes())),
+            ..ProbeResult::new(truncation_detected, "truncated output was accepted")
         },
     );
 
-    // 5. Bad runtime CBMC probe
-    // Verify that gate refuses an invalid CBMC version
-    let cbmc_declared = ctx.toolchain.cbmc.as_deref().unwrap_or("6.10.0");
-    let bad_cbmc_reported = "0.0.0 (forced bad runtime)";
-    let bad_cbmc_detected = cbmc_declared != bad_cbmc_reported;
+    // 5. Toolchain runtime version validation probe
+    let cbmc_declared = ctx.toolchain.cbmc.as_deref().unwrap_or("");
+    let toolchain_valid = !cbmc_declared.is_empty() && cbmc_declared != "0.0.0";
     results.insert(
         "bad_runtime_cbmc".to_string(),
+        ProbeResult::new(
+            toolchain_valid,
+            "toolchain manifest has empty or unresolvable CBMC version",
+        ),
+    );
+
+    // 6. Positive control probe: baseline verification succeeds
+    let positive_detected =
+        positive.status.success() && complete_stdout.contains("VERIFICATION:- SUCCESSFUL");
+    results.insert(
+        "positive_control".to_string(),
         ProbeResult {
-            detected: bad_cbmc_detected,
-            evidence: None,
-            returncode: None,
-            kani_returncode: None,
-            positive_control_returncode: None,
-            output_sha256: None,
-            complete_output_sha256: None,
-            truncated_output_sha256: None,
+            returncode: positive_code,
+            output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
+            ..ProbeResult::new(positive_detected, "positive control failed to verify")
         },
     );
 
-    // 6. Backend failure probe
-    // Positive control on backend_probe passes
-    let backend_detected =
-        positive.status.success() && complete_stdout.contains("VERIFICATION:- SUCCESSFUL");
+    // 7. Backend failure probe: verifier must fail-closed on invalid backend configuration
+    let mut invalid_cmd = Command::new(&ctx.kani_bin);
+    invalid_cmd.arg(&probe_path).arg("--output-format=terse").arg("--solver=non_existent_solver");
+    let invalid_run = run_with_timeout(invalid_cmd, Duration::from_secs(60))?;
+    let backend_failure_detected = !invalid_run.status.success();
     results.insert(
         "backend_failure".to_string(),
         ProbeResult {
-            detected: backend_detected,
-            evidence: None,
-            returncode: positive_code,
-            kani_returncode: None,
-            positive_control_returncode: None,
-            output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
-            complete_output_sha256: None,
-            truncated_output_sha256: None,
+            returncode: invalid_run.status.code(),
+            output_sha256: Some(hash_bytes(invalid_run.stdout.as_bytes())),
+            ..ProbeResult::new(
+                backend_failure_detected,
+                "invalid backend configuration did not fail",
+            )
         },
     );
 
@@ -195,21 +157,18 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
     let toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
     let all_detected = results.values().all(|r| r.detected);
 
+    let gate_sha256 = match std::env::current_exe() {
+        Ok(exe) => sha256_file(&exe).unwrap_or_else(|_| hash_bytes(b"kani-qualify-v0.1.0")),
+        Err(_) => hash_bytes(b"kani-qualify-v0.1.0"),
+    };
+
     Ok(MutationReceipt {
         schema: 1,
-        executed_at: chrono_now_iso(),
-        gate_sha256: hash_bytes(b"kani-qualify-v0.1.0"),
+        executed_at: current_iso_timestamp(),
+        gate_sha256,
         toolchain_sha256,
         fixtures: fixture_hashes,
         results,
         status: if all_detected { GateStatus::Pass } else { GateStatus::Fail },
     })
-}
-
-fn chrono_now_iso() -> String {
-    // Standard UTC ISO string without external chrono dependency
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(dur) => format!("{}.{:03}Z", dur.as_secs(), dur.subsec_millis()),
-        Err(_) => "1970-01-01T00:00:00Z".to_string(),
-    }
 }

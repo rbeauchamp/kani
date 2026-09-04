@@ -42,7 +42,7 @@ Guarantees across Kani and its qualification tooling are owned by distinct artif
 
 | Owning artifact | Where it lives | How to run or probe it |
 |---|---|---|
-| Red-mutation safety probe (fail-closed qualification) | `qualification/fixtures/mutations/`, `tools/kani-qualify/src/mutations.rs` | `cargo run -p kani-qualify -- mutations --fixtures qualification/fixtures/mutations` |
+| Red-mutation safety probe (fail-closed qualification) | `qualification/fixtures/mutations/`, `tools/kani-qualify/src/mutations.rs` | `cargo run -p kani-qualify -- mutations --toolchain qualification/manifests/core-v1/toolchain.json --fixtures qualification/fixtures/mutations` |
 | Parser & model verification receipt truth | `tools/kani-qualify/src/{parser,model,composer,gate}.rs` | `cargo test -p kani-qualify` |
 | Verifier end-to-end harness test | `tests/kani/` | `cargo run -p compiletest -- --suite kani --mode kani` |
 | Diagnostic & output oracle truth | `tests/expected/`, `tests/ui/` | `cargo run -p compiletest -- --suite expected --mode expected` |
@@ -116,7 +116,7 @@ Fix all `BLOCK` entries in the parent session as coherent batches. Keep edits na
 
 Every accepted repair requires closure evidence against the named finding, invariant, and impacted contracts:
 1. Re-read the repair hunk and affected contracts.
-2. Run the owning test, probe, or check (e.g. `cargo test -p kani-qualify`, `cargo run -p kani-qualify -- mutations`, `kani-fmt.sh`).
+2. Run the owning test, probe, or check (e.g. `cargo test -p kani-qualify`, `cargo run -p kani-qualify -- mutations --toolchain qualification/manifests/core-v1/toolchain.json --fixtures qualification/fixtures/mutations`, `kani-fmt.sh`).
 3. For `ELEVATED` risk, spawn a fresh targeted verifier subagent using the contract in `references/lens-contracts.md`.
 
 Behavior is stabilized when all `BLOCK` entries have closure evidence and deterministic checks pass.

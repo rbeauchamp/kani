@@ -23,6 +23,31 @@ pub fn sha256_file(path: &Path) -> io::Result<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+pub fn current_iso_timestamp() -> String {
+    let now = std::time::SystemTime::now();
+    let dur = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let secs = dur.as_secs();
+
+    let days = (secs / 86400) as i64;
+    let day_secs = (secs % 86400) as u32;
+    let hour = day_secs / 3600;
+    let minute = (day_secs % 3600) / 60;
+    let second = day_secs % 60;
+
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hour, minute, second)
+}
+
 pub struct CommandOutput {
     pub status: std::process::ExitStatus,
     pub stdout: String,
@@ -34,6 +59,21 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOu
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("failed to spawn command: {e}"))?;
 
+    let mut stdout_pipe = child.stdout.take().ok_or("failed to capture child stdout")?;
+    let mut stderr_pipe = child.stderr.take().ok_or("failed to capture child stderr")?;
+
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr_pipe.read_to_end(&mut buf);
+        buf
+    });
+
     let timeout_result =
         child.wait_timeout(timeout).map_err(|e| format!("error waiting for child: {e}"))?;
 
@@ -42,19 +82,19 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOu
         None => {
             let _ = child.kill();
             let _ = child.wait();
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
             return Err(format!("command timed out after {}s", timeout.as_secs()));
         }
     };
 
-    let mut stdout = String::new();
-    if let Some(mut out) = child.stdout.take() {
-        let _ = out.read_to_string(&mut stdout);
-    }
+    let raw_stdout = stdout_handle.join().unwrap_or_default();
+    let raw_stderr = stderr_handle.join().unwrap_or_default();
 
-    let mut stderr = String::new();
-    if let Some(mut err) = child.stderr.take() {
-        let _ = err.read_to_string(&mut stderr);
-    }
+    let stdout = String::from_utf8(raw_stdout)
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned());
+    let stderr = String::from_utf8(raw_stderr)
+        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned());
 
     Ok(CommandOutput { status, stdout, stderr })
 }

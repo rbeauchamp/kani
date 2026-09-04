@@ -58,36 +58,18 @@ enum Commands {
     },
 }
 
-fn main() -> ExitCode {
+fn run() -> Result<ExitCode, String> {
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Mutations { toolchain, fixtures, kani_bin, receipt } => {
-            if !toolchain.exists() {
-                eprintln!("Error: toolchain manifest not found at {}", toolchain.display());
-                return ExitCode::FAILURE;
-            }
-            if !fixtures.exists() {
-                eprintln!("Error: fixtures directory not found at {}", fixtures.display());
-                return ExitCode::FAILURE;
-            }
-
-            let toolchain_content = match fs::read_to_string(&toolchain) {
-                Ok(content) => content,
-                Err(e) => {
-                    eprintln!("Error reading toolchain manifest: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
+            let toolchain_content = fs::read_to_string(&toolchain).map_err(|e| {
+                format!("failed to read toolchain manifest {}: {e}", toolchain.display())
+            })?;
 
             let toolchain_manifest: model::ToolchainManifest =
-                match serde_json::from_str(&toolchain_content) {
-                    Ok(manifest) => manifest,
-                    Err(e) => {
-                        eprintln!("Error parsing toolchain manifest JSON: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                };
+                serde_json::from_str(&toolchain_content)
+                    .map_err(|e| format!("failed to parse toolchain manifest JSON: {e}"))?;
 
             let ctx = mutations::MutationContext {
                 kani_bin,
@@ -97,86 +79,75 @@ fn main() -> ExitCode {
             };
 
             println!("Running fail-closed red-mutation probes...");
-            let mutation_receipt = match mutations::run_all_mutations(&ctx) {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("Error running mutation probes: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            let json_out = serde_json::to_string_pretty(&mutation_receipt).unwrap();
+            let mutation_receipt = mutations::run_all_mutations(&ctx)?;
+            let json_out = serde_json::to_string_pretty(&mutation_receipt)
+                .map_err(|e| format!("failed to serialize mutation receipt: {e}"))?;
             println!("{json_out}");
 
             if let Some(receipt_path) = receipt {
-                if let Err(e) = fs::write(&receipt_path, &json_out) {
-                    eprintln!("Error writing receipt to {}: {e}", receipt_path.display());
-                    return ExitCode::FAILURE;
-                }
+                fs::write(&receipt_path, &json_out).map_err(|e| {
+                    format!("failed to write receipt to {}: {e}", receipt_path.display())
+                })?;
                 println!("Saved mutation receipt to {}", receipt_path.display());
             }
 
-            if mutation_receipt.status == model::GateStatus::Pass {
-                println!("All red mutations successfully detected (gate passed).");
-                ExitCode::SUCCESS
-            } else {
-                eprintln!("One or more red mutations were NOT detected (gate failed).");
-                ExitCode::FAILURE
+            match mutation_receipt.status {
+                model::GateStatus::Pass => {
+                    println!("All red mutations successfully detected (gate passed).");
+                    Ok(ExitCode::SUCCESS)
+                }
+                model::GateStatus::Fail => {
+                    eprintln!("One or more red mutations were NOT detected (gate failed).");
+                    Ok(ExitCode::FAILURE)
+                }
             }
         }
         Commands::Parse { log } => {
-            let content = match fs::read_to_string(&log) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error reading log file: {e}");
-                    return ExitCode::FAILURE;
-                }
-            };
+            let content = fs::read_to_string(&log)
+                .map_err(|e| format!("failed to read log {}: {e}", log.display()))?;
 
-            match parser::parse_kani_output(&content) {
-                Ok(parsed) => {
-                    println!("Parsed {} harnesses", parsed.harnesses.len());
-                    for (name, h) in &parsed.harnesses {
-                        let status = if h.successful { "PASS" } else { "FAIL" };
-                        let unreachable = h.unreachable.unwrap_or(0);
-                        let covers = match (h.covers_satisfied, h.covers_total) {
-                            (Some(s), Some(t)) => format!("covers: {s}/{t}"),
-                            _ => "no covers".to_string(),
-                        };
-                        println!(" - {name}: {status} (unreachable: {unreachable}, {covers})");
-                    }
-                    if let Some((s, f, t)) = parsed.summary {
-                        println!("Summary: {s} successful, {f} failed, {t} total");
-                    }
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("Error parsing log: {e}");
-                    return ExitCode::FAILURE;
-                }
+            let parsed = parser::parse_kani_output(&content)?;
+            println!("Parsed {} harnesses", parsed.harnesses.len());
+            for (name, h) in &parsed.harnesses {
+                let unreachable = h.unreachable.unwrap_or(0);
+                let covers = match h.covers {
+                    Some(c) => format!("covers: {}/{}", c.satisfied, c.total),
+                    None => "no covers".to_string(),
+                };
+                println!(" - {name}: {} (unreachable: {unreachable}, {covers})", h.verdict);
             }
+            if let Some(s) = parsed.summary {
+                println!(
+                    "Summary: {} successful, {} failed, {} total",
+                    s.successful, s.failed, s.total
+                );
+            }
+
+            if parsed.is_pass() { Ok(ExitCode::SUCCESS) } else { Ok(ExitCode::FAILURE) }
         }
         Commands::Compose { logs, receipt } => {
             let log_refs: Vec<&Path> = logs.iter().map(|p| p.as_path()).collect();
-            match composer::compose_logs(&log_refs) {
-                Ok(composite) => {
-                    let json_out = serde_json::to_string_pretty(&composite).unwrap();
-                    if let Err(e) = fs::write(&receipt, &json_out) {
-                        eprintln!("Error writing composite receipt: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                    println!("Composite receipt written to {}", receipt.display());
-                    if composite.status == model::GateStatus::Pass {
-                        ExitCode::SUCCESS
-                    } else {
-                        ExitCode::FAILURE
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Error composing logs: {e}");
-                    return ExitCode::FAILURE;
-                }
+            let composite = composer::compose_logs(&log_refs)?;
+            let json_out = serde_json::to_string_pretty(&composite)
+                .map_err(|e| format!("failed to serialize composite receipt: {e}"))?;
+            fs::write(&receipt, &json_out)
+                .map_err(|e| format!("failed to write receipt to {}: {e}", receipt.display()))?;
+            println!("Composite receipt written to {}", receipt.display());
+
+            match composite.status {
+                model::GateStatus::Pass => Ok(ExitCode::SUCCESS),
+                model::GateStatus::Fail => Ok(ExitCode::FAILURE),
             }
+        }
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            ExitCode::FAILURE
         }
     }
 }

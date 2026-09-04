@@ -7,13 +7,18 @@ on:
   pull_request:
     paths:
       - .github/workflows/qualification-core-v1.yml
+      - Cargo.toml
+      - Cargo.lock
       - qualification/**
       - tools/kani-qualify/**
+  merge_group:
   push:
     branches:
       - main
     paths:
       - .github/workflows/qualification-core-v1.yml
+      - Cargo.toml
+      - Cargo.lock
       - qualification/**
       - tools/kani-qualify/**
   workflow_dispatch:
@@ -23,7 +28,7 @@ permissions:
 
 concurrency:
   group: qualification-core-v1-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   policy-tests:

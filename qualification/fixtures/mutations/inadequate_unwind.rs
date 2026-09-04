@@ -8,5 +8,6 @@ fn inadequate_unwind() {
     while value < 2 {
         value += 1;
     }
-    assert_eq!(value, 2);
+    // Only an unwinding assertion failure should cause this harness to fail verification
+    assert!(value <= 2);
 }
