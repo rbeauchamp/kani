@@ -33,17 +33,17 @@ concurrency:
 jobs:
   policy-tests:
     name: Qualification tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Check out the qualification program
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
 
       - name: Setup Kani Dependencies
         uses: ./.github/actions/setup
         with:
-          os: ubuntu-24.04
+          os: ubuntu-22.04
 
       - name: Test kani-qualify tool
         run: cargo test -p kani-qualify
@@ -52,3 +52,13 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest discover -s qualification/scripts -p 'test_*.py' -v
+
+      - name: Build Kani
+        run: cargo build-dev
+
+      - name: Run red-mutation qualification gate
+        run: |
+          cargo run -p kani-qualify -- mutations \
+            --toolchain qualification/manifests/core-v1/toolchain.json \
+            --fixtures qualification/fixtures/mutations \
+            --kani-bin target/kani/bin/kani

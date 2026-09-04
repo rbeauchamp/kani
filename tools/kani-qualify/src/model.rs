@@ -83,6 +83,7 @@ pub struct MutationReceipt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolchainManifest {
     pub schema: Option<u32>,
+    pub profile: Option<String>,
     #[serde(alias = "cargo_kani_version")]
     pub kani: Option<String>,
     pub rustc: Option<String>,
@@ -92,6 +93,32 @@ pub struct ToolchainManifest {
     pub kissat: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
+}
+
+impl ToolchainManifest {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema != Some(1) {
+            return Err(format!("invalid or unsupported toolchain schema: {:?}", self.schema));
+        }
+        if let Some(prof) = &self.profile
+            && prof != "core-v1"
+        {
+            return Err(format!("unsupported qualification profile: {prof}"));
+        }
+        let kani = self.kani.as_deref().unwrap_or("");
+        if kani.is_empty() || !kani.contains("0.67") {
+            return Err(format!("invalid or unverified kani version: {kani:?}"));
+        }
+        let cbmc = self.cbmc.as_deref().unwrap_or("");
+        if cbmc.is_empty() || cbmc == "0.0.0" {
+            return Err("missing or empty cbmc version in toolchain manifest".to_string());
+        }
+        let kissat = self.kissat.as_deref().unwrap_or("");
+        if kissat.is_empty() || kissat == "0.0.0" {
+            return Err("missing or empty kissat version in toolchain manifest".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +152,10 @@ pub struct CompositeReceipt {
     pub harnesses: BTreeMap<String, HarnessSummary>,
     pub warnings: Vec<String>,
     pub unsupported_constructs: BTreeMap<String, u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_logs: Option<BTreeMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gate_sha256: Option<String>,
 }
 
 #[cfg(test)]

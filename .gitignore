@@ -90,3 +90,7 @@ tests/kani-multicrate/type-mismatch/mismatch/target
 /docs/gen_src
 /docs/mdbook*
 /kani-*.tar.gz
+
+## Fork-local private workspace
+# Private planning, evidence, and artifacts that must never enter Git history.
+/.private-workspace/

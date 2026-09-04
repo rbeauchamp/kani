@@ -45,7 +45,7 @@ Guarantees across Kani and its qualification tooling are owned by distinct artif
 | Red-mutation safety probe (fail-closed qualification) | `qualification/fixtures/mutations/`, `tools/kani-qualify/src/mutations.rs` | `cargo run -p kani-qualify -- mutations --toolchain qualification/manifests/core-v1/toolchain.json --fixtures qualification/fixtures/mutations` |
 | Parser & model verification receipt truth | `tools/kani-qualify/src/{parser,model,composer,gate}.rs` | `cargo test -p kani-qualify` |
 | Verifier end-to-end harness test | `tests/kani/` | `cargo run -p compiletest -- --suite kani --mode kani` |
-| Diagnostic & output oracle truth | `tests/expected/`, `tests/ui/` | `cargo run -p compiletest -- --suite expected --mode expected` |
+| Diagnostic & output oracle truth | `tests/expected/`, `tests/ui/` | `cargo run -p compiletest -- --suite expected --mode expected && cargo run -p compiletest -- --suite ui --mode expected` |
 | Cargo integration verification | `tests/cargo-kani/` | `cargo run -p compiletest -- --suite cargo-kani --mode cargo-kani` |
 | Core crate unit & property tests | `cprover_bindings`, `kani-compiler`, `kani-driver`, `kani_metadata`, `kani` | `cargo test -p <crate>` |
 | License, copyright & supply-chain gate | Root, `.cargo/config.toml`, `deny.toml` | `git ls-files . \| grep -v -E -f scripts/ci/copyright-exclude \| tr '\n' '\0' \| xargs -0 python3 scripts/ci/copyright_check.py && cargo deny check` |

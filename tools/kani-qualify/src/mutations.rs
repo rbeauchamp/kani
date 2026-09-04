@@ -24,6 +24,22 @@ pub struct MutationContext<'a> {
 }
 
 pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, String> {
+    // Hash inputs before executing any probes
+    let mut fixture_hashes = BTreeMap::new();
+    for entry in fs::read_dir(ctx.fixtures_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            let hash = sha256_file(&path).map_err(|e| e.to_string())?;
+            fixture_hashes.insert(path.file_name().unwrap().to_string_lossy().to_string(), hash);
+        }
+    }
+    let toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
+    let gate_sha256 = match std::env::current_exe() {
+        Ok(exe) => sha256_file(&exe).unwrap_or_else(|_| hash_bytes(b"kani-qualify-v0.1.0")),
+        Err(_) => hash_bytes(b"kani-qualify-v0.1.0"),
+    };
+
     let mut results = BTreeMap::new();
 
     // 1. Inadequate unwind probe: must fail specifically due to unwinding assertion
@@ -81,55 +97,88 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
         ProbeResult::new(timeout_detected, "timeout probe did not trigger timeout"),
     );
 
-    // 4. Parser truncation probe: truncated logs missing summary must be detected
+    // 4. Positive control probe: baseline verification succeeds and parses cleanly
     let probe_path = ctx.fixtures_dir.join("backend_probe.rs");
     let mut cmd = Command::new(&ctx.kani_bin);
     cmd.arg(&probe_path).arg("--output-format=terse");
     let positive = run_with_timeout(cmd, Duration::from_secs(120))?;
     let positive_code = positive.status.code();
     let complete_stdout = positive.stdout;
-    let truncated_stdout = complete_stdout.split("Complete -").next().unwrap_or("");
-    let parsed_truncated = parse_kani_output(truncated_stdout);
-    let truncation_detected =
-        parsed_truncated.is_err() || parsed_truncated.unwrap().summary.is_none();
+    let parsed_positive = parse_kani_output(&complete_stdout);
+    let positive_detected =
+        positive.status.success() && parsed_positive.as_ref().is_ok_and(|p| p.is_pass());
+    results.insert(
+        "positive_control".to_string(),
+        ProbeResult {
+            returncode: positive_code,
+            output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
+            ..ProbeResult::new(
+                positive_detected,
+                "positive control failed to verify or parse as valid pass",
+            )
+        },
+    );
+
+    // 5. Parser truncation probe: truncated logs missing summary must be detected and rejected
+    let (truncation_detected, truncated_stdout) = if positive_detected {
+        let truncated = complete_stdout.split("Complete -").next().unwrap_or("").to_string();
+        let parsed_trunc = parse_kani_output(&truncated);
+        let rejected = parsed_trunc.as_ref().map_or(true, |p| !p.is_pass());
+        let distinct = truncated != complete_stdout && !truncated.is_empty();
+        (distinct && rejected, truncated)
+    } else {
+        (false, String::new())
+    };
     results.insert(
         "parser_truncation".to_string(),
         ProbeResult {
             positive_control_returncode: positive_code,
             complete_output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
             truncated_output_sha256: Some(hash_bytes(truncated_stdout.as_bytes())),
-            ..ProbeResult::new(truncation_detected, "truncated output was accepted")
+            ..ProbeResult::new(
+                truncation_detected,
+                "truncated output was accepted or could not be derived from positive control",
+            )
         },
     );
 
-    // 5. Toolchain runtime version validation probe
-    let cbmc_declared = ctx.toolchain.cbmc.as_deref().unwrap_or("");
-    let toolchain_valid = !cbmc_declared.is_empty() && cbmc_declared != "0.0.0";
+    // 6. Toolchain runtime version validation probe
+    let manifest_valid = ctx.toolchain.validate().is_ok();
+    let bogus_manifest = ToolchainManifest {
+        schema: Some(999),
+        profile: Some("invalid-profile".to_string()),
+        kani: Some("bogus-version".to_string()),
+        rustc: None,
+        cbmc: Some("0.0.0-bogus".to_string()),
+        kissat: None,
+        extra: BTreeMap::new(),
+    };
+    let bogus_rejected = bogus_manifest.validate().is_err();
+    let toolchain_probe_detected = manifest_valid && bogus_rejected;
     results.insert(
         "bad_runtime_cbmc".to_string(),
         ProbeResult::new(
-            toolchain_valid,
-            "toolchain manifest has empty or unresolvable CBMC version",
+            toolchain_probe_detected,
+            "toolchain validation failed to detect invalid manifest or runtime",
         ),
     );
 
-    // 6. Positive control probe: baseline verification succeeds
-    let positive_detected =
-        positive.status.success() && complete_stdout.contains("VERIFICATION:- SUCCESSFUL");
-    results.insert(
-        "positive_control".to_string(),
-        ProbeResult {
-            returncode: positive_code,
-            output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
-            ..ProbeResult::new(positive_detected, "positive control failed to verify")
-        },
-    );
-
-    // 7. Backend failure probe: verifier must fail-closed on invalid backend configuration
+    // 7. Backend failure probe: verifier must fail-closed on backend-stage failure
     let mut invalid_cmd = Command::new(&ctx.kani_bin);
-    invalid_cmd.arg(&probe_path).arg("--output-format=terse").arg("--solver=non_existent_solver");
+    invalid_cmd
+        .arg(&probe_path)
+        .arg("--output-format=terse")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--cbmc-args")
+        .arg("--unsupported-cbmc-option-probe-fail");
     let invalid_run = run_with_timeout(invalid_cmd, Duration::from_secs(60))?;
-    let backend_failure_detected = !invalid_run.status.success();
+    let backend_failure_detected = !invalid_run.status.success()
+        && invalid_run.status.code() != Some(2)
+        && (invalid_run.stdout.contains("CBMC failed")
+            || invalid_run.stdout.contains("VERIFICATION:- FAILED")
+            || invalid_run.stdout.contains("Unknown option")
+            || invalid_run.stderr.contains("Unknown option"));
     results.insert(
         "backend_failure".to_string(),
         ProbeResult {
@@ -137,28 +186,18 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
             output_sha256: Some(hash_bytes(invalid_run.stdout.as_bytes())),
             ..ProbeResult::new(
                 backend_failure_detected,
-                "invalid backend configuration did not fail",
+                "invalid backend configuration did not produce expected backend failure",
             )
         },
     );
 
-    let mut fixture_hashes = BTreeMap::new();
-    for entry in fs::read_dir(ctx.fixtures_dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            let hash = sha256_file(&path).map_err(|e| e.to_string())?;
-            fixture_hashes.insert(path.file_name().unwrap().to_string_lossy().to_string(), hash);
-        }
+    // Verify no input drift occurred during probe execution
+    let post_toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
+    if post_toolchain_sha256 != toolchain_sha256 {
+        return Err("toolchain manifest modified during mutation execution".to_string());
     }
 
-    let toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
     let all_detected = results.values().all(|r| r.detected);
-
-    let gate_sha256 = match std::env::current_exe() {
-        Ok(exe) => sha256_file(&exe).unwrap_or_else(|_| hash_bytes(b"kani-qualify-v0.1.0")),
-        Err(_) => hash_bytes(b"kani-qualify-v0.1.0"),
-    };
 
     Ok(MutationReceipt {
         schema: 1,

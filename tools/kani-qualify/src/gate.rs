@@ -48,15 +48,20 @@ pub fn current_iso_timestamp() -> String {
     format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, hour, minute, second)
 }
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 pub struct CommandOutput {
     pub status: std::process::ExitStatus,
     pub stdout: String,
-    #[allow(dead_code)]
     pub stderr: String,
 }
 
 pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOutput, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    cmd.process_group(0);
+
     let mut child = cmd.spawn().map_err(|e| format!("failed to spawn command: {e}"))?;
 
     let mut stdout_pipe = child.stdout.take().ok_or("failed to capture child stdout")?;
@@ -80,6 +85,13 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOu
     let status = match timeout_result {
         Some(status) => status,
         None => {
+            #[cfg(unix)]
+            {
+                let pid = child.id() as i32;
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
             let _ = stdout_handle.join();
@@ -88,8 +100,8 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOu
         }
     };
 
-    let raw_stdout = stdout_handle.join().unwrap_or_default();
-    let raw_stderr = stderr_handle.join().unwrap_or_default();
+    let raw_stdout = stdout_handle.join().map_err(|_| "stdout reader thread panicked")?;
+    let raw_stderr = stderr_handle.join().map_err(|_| "stderr reader thread panicked")?;
 
     let stdout = String::from_utf8(raw_stdout)
         .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned());
@@ -97,4 +109,22 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> Result<CommandOu
         .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned());
 
     Ok(CommandOutput { status, stdout, stderr })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn test_process_tree_timeout_bounded() {
+        let start = Instant::now();
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg("sleep 5 & wait");
+        let result = run_with_timeout(cmd, Duration::from_millis(100));
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err());
+        assert!(elapsed < Duration::from_millis(800));
+    }
 }

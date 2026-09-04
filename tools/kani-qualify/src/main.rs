@@ -52,10 +52,30 @@ enum Commands {
         #[arg(long, num_args = 1..)]
         logs: Vec<PathBuf>,
 
+        /// Optional path to toolchain manifest to bind and validate against
+        #[arg(long)]
+        toolchain: Option<PathBuf>,
+
         /// Output path for receipt JSON
         #[arg(long)]
         receipt: PathBuf,
     },
+}
+
+fn write_receipt_no_clobber(path: &Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut file =
+        std::fs::OpenOptions::new().write(true).create_new(true).open(path).map_err(|e| {
+            if path.exists() {
+                format!("refusing to overwrite existing immutable receipt at: {}", path.display())
+            } else {
+                format!("failed to create receipt at {}: {e}", path.display())
+            }
+        })?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("failed to write receipt to {}: {e}", path.display()))?;
+    file.flush().map_err(|e| format!("failed to flush receipt to {}: {e}", path.display()))?;
+    Ok(())
 }
 
 fn run() -> Result<ExitCode, String> {
@@ -70,6 +90,9 @@ fn run() -> Result<ExitCode, String> {
             let toolchain_manifest: model::ToolchainManifest =
                 serde_json::from_str(&toolchain_content)
                     .map_err(|e| format!("failed to parse toolchain manifest JSON: {e}"))?;
+            toolchain_manifest
+                .validate()
+                .map_err(|e| format!("invalid toolchain manifest {}: {e}", toolchain.display()))?;
 
             let ctx = mutations::MutationContext {
                 kani_bin,
@@ -85,9 +108,7 @@ fn run() -> Result<ExitCode, String> {
             println!("{json_out}");
 
             if let Some(receipt_path) = receipt {
-                fs::write(&receipt_path, &json_out).map_err(|e| {
-                    format!("failed to write receipt to {}: {e}", receipt_path.display())
-                })?;
+                write_receipt_no_clobber(&receipt_path, &json_out)?;
                 println!("Saved mutation receipt to {}", receipt_path.display());
             }
 
@@ -125,13 +146,24 @@ fn run() -> Result<ExitCode, String> {
 
             if parsed.is_pass() { Ok(ExitCode::SUCCESS) } else { Ok(ExitCode::FAILURE) }
         }
-        Commands::Compose { logs, receipt } => {
+        Commands::Compose { logs, toolchain, receipt } => {
+            if let Some(toolchain_path) = &toolchain {
+                let toolchain_content = fs::read_to_string(toolchain_path).map_err(|e| {
+                    format!("failed to read toolchain manifest {}: {e}", toolchain_path.display())
+                })?;
+                let toolchain_manifest: model::ToolchainManifest =
+                    serde_json::from_str(&toolchain_content)
+                        .map_err(|e| format!("failed to parse toolchain manifest JSON: {e}"))?;
+                toolchain_manifest.validate().map_err(|e| {
+                    format!("invalid toolchain manifest {}: {e}", toolchain_path.display())
+                })?;
+            }
+
             let log_refs: Vec<&Path> = logs.iter().map(|p| p.as_path()).collect();
             let composite = composer::compose_logs(&log_refs)?;
             let json_out = serde_json::to_string_pretty(&composite)
                 .map_err(|e| format!("failed to serialize composite receipt: {e}"))?;
-            fs::write(&receipt, &json_out)
-                .map_err(|e| format!("failed to write receipt to {}: {e}", receipt.display()))?;
+            write_receipt_no_clobber(&receipt, &json_out)?;
             println!("Composite receipt written to {}", receipt.display());
 
             match composite.status {
