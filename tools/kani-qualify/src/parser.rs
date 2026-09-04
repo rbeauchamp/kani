@@ -47,9 +47,9 @@ impl ParsedOutput {
             && self
                 .harnesses
                 .values()
-                .all(|h| h.is_pass() && h.covers.map_or(true, |c| c.satisfied == c.total));
+                .all(|h| h.is_pass() && h.covers.is_none_or(|c| c.satisfied == c.total));
 
-        let summary_pass = self.summary.map_or(false, |s| {
+        let summary_pass = self.summary.is_some_and(|s| {
             s.failed == 0 && s.successful == s.total && s.total == self.harnesses.len() as u32
         });
 

@@ -72,7 +72,7 @@ pub fn compose_logs(log_paths: &[&Path]) -> Result<CompositeReceipt, String> {
         } else {
             failed += 1;
         }
-        if !h.covers.map_or(true, |c| c.satisfied == c.total) {
+        if !h.covers.is_none_or(|c| c.satisfied == c.total) {
             all_covers_satisfied = false;
         }
     }

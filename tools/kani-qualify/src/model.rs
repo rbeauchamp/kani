@@ -108,6 +108,7 @@ impl HarnessSummary {
         self.verdict == HarnessVerdict::Pass
     }
 
+    #[allow(dead_code)]
     pub fn is_fail(&self) -> bool {
         self.verdict == HarnessVerdict::Fail
     }

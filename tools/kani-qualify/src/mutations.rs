@@ -53,10 +53,8 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
     let parsed_vacuity = parse_kani_output(&vacuity.stdout);
     let vacuity_detected = match parsed_vacuity {
         Ok(parsed) => {
-            let cover_failed = parsed
-                .harnesses
-                .values()
-                .any(|h| h.covers.map_or(false, |c| c.satisfied < c.total));
+            let cover_failed =
+                parsed.harnesses.values().any(|h| h.covers.is_some_and(|c| c.satisfied < c.total));
             cover_failed || vacuity.stdout.contains("UNSATISFIED")
         }
         Err(_) => false, // Fail-closed: parse failure is not vacuity detection
@@ -148,7 +146,7 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
     for entry in fs::read_dir(ctx.fixtures_dir).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "rs") {
+        if path.extension().is_some_and(|ext| ext == "rs") {
             let hash = sha256_file(&path).map_err(|e| e.to_string())?;
             fixture_hashes.insert(path.file_name().unwrap().to_string_lossy().to_string(), hash);
         }
