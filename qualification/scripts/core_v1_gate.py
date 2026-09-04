@@ -292,13 +292,20 @@ def validate_invocation(arguments: list[str]) -> None:
         if argument == "--output-format":
             if index + 1 >= len(arguments) or arguments[index + 1] != "terse":
                 raise GateError("core-v1 requires --output-format=terse")
+        feature = None
         if argument == "-Z":
             if index + 1 >= len(arguments):
                 raise GateError("-Z is missing its feature name")
-            if arguments[index + 1] in PROHIBITED_UNSTABLE_FEATURES:
-                raise GateError(
-                    f"core-v1 prohibits unstable feature {arguments[index + 1]!r}"
-                )
+            feature = arguments[index + 1]
+        elif argument.startswith("-Z="):
+            feature = argument[3:]
+        elif argument.startswith("-Z") and len(argument) > 2:
+            feature = argument[2:]
+
+        if feature is not None and feature in PROHIBITED_UNSTABLE_FEATURES:
+            raise GateError(
+                f"core-v1 prohibits unstable feature {feature!r}"
+            )
 
 
 def verify_git_identity(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, str]:

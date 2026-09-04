@@ -94,10 +94,13 @@ fn run() -> Result<ExitCode, String> {
                 .validate()
                 .map_err(|e| format!("invalid toolchain manifest {}: {e}", toolchain.display()))?;
 
+            let toolchain_sha256 = mutations::hash_bytes(toolchain_content.as_bytes());
+
             let ctx = mutations::MutationContext {
                 kani_bin,
                 fixtures_dir: &fixtures,
                 toolchain_path: &toolchain,
+                toolchain_sha256,
                 toolchain: toolchain_manifest,
             };
 

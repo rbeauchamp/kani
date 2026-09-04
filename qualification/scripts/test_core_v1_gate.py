@@ -42,6 +42,8 @@ class InvocationPolicyTests(unittest.TestCase):
             ["--output-format=old"],
             ["--output-format=regular"],
             ["-Z", "quantifiers"],
+            ["-Zquantifiers"],
+            ["-Z=quantifiers"],
         ]
         for arguments in examples:
             with self.subTest(arguments=arguments):

@@ -20,6 +20,7 @@ pub struct MutationContext<'a> {
     pub kani_bin: PathBuf,
     pub fixtures_dir: &'a Path,
     pub toolchain_path: &'a Path,
+    pub toolchain_sha256: String,
     pub toolchain: ToolchainManifest,
 }
 
@@ -34,7 +35,7 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
             fixture_hashes.insert(path.file_name().unwrap().to_string_lossy().to_string(), hash);
         }
     }
-    let toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
+    let toolchain_sha256 = ctx.toolchain_sha256.clone();
     let gate_sha256 = match std::env::current_exe() {
         Ok(exe) => sha256_file(&exe).unwrap_or_else(|_| hash_bytes(b"kani-qualify-v0.1.0")),
         Err(_) => hash_bytes(b"kani-qualify-v0.1.0"),
@@ -121,13 +122,13 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
 
     // 5. Parser truncation probe: truncated logs missing summary must be detected and rejected
     let (truncation_detected, truncated_stdout) = if positive_detected {
-        let truncated = complete_stdout.split("Complete -").next().unwrap_or("").to_string();
-        let parsed_trunc = parse_kani_output(&truncated);
+        let truncated = complete_stdout.split("Complete -").next().unwrap_or("");
+        let parsed_trunc = parse_kani_output(truncated);
         let rejected = parsed_trunc.as_ref().map_or(true, |p| !p.is_pass());
         let distinct = truncated != complete_stdout && !truncated.is_empty();
         (distinct && rejected, truncated)
     } else {
-        (false, String::new())
+        (false, "")
     };
     results.insert(
         "parser_truncation".to_string(),
