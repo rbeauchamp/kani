@@ -4,12 +4,18 @@
 name: Qualified core-v1 replay
 
 on:
-  push:
-    branches:
-      - qualification/bootstrap
+  pull_request:
     paths:
       - .github/workflows/qualification-core-v1.yml
       - qualification/**
+      - tools/kani-qualify/**
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/qualification-core-v1.yml
+      - qualification/**
+      - tools/kani-qualify/**
   workflow_dispatch:
 
 permissions:
@@ -21,15 +27,23 @@ concurrency:
 
 jobs:
   policy-tests:
-    name: Gate policy tests
-    runs-on: ubuntu-22.04
+    name: Qualification tests
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out the qualification program
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Test the fail-closed gate
+      - name: Setup Kani Dependencies
+        uses: ./.github/actions/setup
+        with:
+          os: ubuntu-24.04
+
+      - name: Test kani-qualify tool
+        run: cargo test -p kani-qualify
+
+      - name: Test gate policy
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest discover -s qualification/scripts -p 'test_*.py' -v
