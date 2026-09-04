@@ -194,27 +194,35 @@ pub fn parse_kani_output(text: &str) -> Result<ParsedOutput, String> {
         };
 
         let fail_records: Vec<_> = FAILED_RE.captures_iter(block).collect();
-        if fail_records.len() > 1 {
-            return Err(format!("duplicate failure records found for harness: {harness}"));
+        if fail_records.len() != 1 {
+            return Err(format!(
+                "expected exactly one failure record for harness {harness}, found {}",
+                fail_records.len()
+            ));
         }
 
-        let unreachable = if let Some(fcaps) = fail_records.first() {
-            let num_failed =
-                fcaps.get(1).unwrap().as_str().parse::<u32>().map_err(|e| e.to_string())?;
-            if verdict == HarnessVerdict::Pass && num_failed > 0 {
-                return Err(format!(
-                    "contradictory result for harness {harness}: reported {num_failed} failed checks but verdict is SUCCESSFUL"
-                ));
-            }
-            if verdict == HarnessVerdict::Fail && num_failed == 0 {
-                return Err(format!(
-                    "contradictory result for harness {harness}: reported 0 failed checks but verdict is FAILED"
-                ));
-            }
-            fcaps.get(3).and_then(|m| m.as_str().parse::<u32>().ok())
-        } else {
-            None
-        };
+        let fcaps = &fail_records[0];
+        let num_failed =
+            fcaps.get(1).unwrap().as_str().parse::<u32>().map_err(|e| e.to_string())?;
+        let num_total = fcaps.get(2).unwrap().as_str().parse::<u32>().map_err(|e| e.to_string())?;
+
+        if num_failed > num_total {
+            return Err(format!(
+                "invalid failure record for harness {harness}: failed ({num_failed}) > total ({num_total})"
+            ));
+        }
+
+        if verdict == HarnessVerdict::Pass && num_failed != 0 {
+            return Err(format!(
+                "contradictory result for harness {harness}: reported {num_failed} failed checks but verdict is SUCCESSFUL"
+            ));
+        }
+        if verdict == HarnessVerdict::Fail && num_failed == 0 {
+            return Err(format!(
+                "contradictory result for harness {harness}: reported 0 failed checks but verdict is FAILED"
+            ));
+        }
+        let unreachable = fcaps.get(3).and_then(|m| m.as_str().parse::<u32>().ok());
 
         let mut covers = None;
         if let Some(ccaps) = COVER_RE.captures(block) {
@@ -470,8 +478,10 @@ Complete - 1 successfully verified harnesses, 0 failures, 1 total.
     fn test_parse_duplicate_harness_in_single_log_fails() {
         let sample = r#"
 Checking harness test::dup...
+ ** 0 of 1 failed
 VERIFICATION:- SUCCESSFUL
 Checking harness test::dup...
+ ** 1 of 1 failed
 VERIFICATION:- FAILED
 Complete - 1 successfully verified harnesses, 1 failures, 2 total.
 "#;
@@ -483,6 +493,7 @@ Complete - 1 successfully verified harnesses, 1 failures, 2 total.
     fn test_parse_duplicate_summary_fails() {
         let sample = r#"
 Checking harness test::h...
+ ** 0 of 1 failed
 VERIFICATION:- SUCCESSFUL
 Complete - 1 successfully verified harnesses, 0 failures, 1 total.
 Complete - 1 successfully verified harnesses, 0 failures, 1 total.
@@ -499,5 +510,53 @@ Checking harness test::aborted_harness...
 "#;
         let err = parse_kani_output(sample).unwrap_err();
         assert!(err.contains("missing or inconclusive verification verdict"));
+    }
+
+    #[test]
+    fn test_parse_zero_failure_records_fails() {
+        let sample = r#"
+Checking harness test::no_records...
+VERIFICATION:- SUCCESSFUL
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let err = parse_kani_output(sample).unwrap_err();
+        assert!(err.contains("expected exactly one failure record for harness"));
+    }
+
+    #[test]
+    fn test_parse_multiple_failure_records_fails() {
+        let sample = r#"
+Checking harness test::multi_records...
+ ** 0 of 1 failed
+ ** 0 of 1 failed
+VERIFICATION:- SUCCESSFUL
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let err = parse_kani_output(sample).unwrap_err();
+        assert!(err.contains("expected exactly one failure record for harness"));
+    }
+
+    #[test]
+    fn test_parse_failed_exceeds_total_fails() {
+        let sample = r#"
+Checking harness test::invalid_counts...
+ ** 3 of 2 failed
+VERIFICATION:- FAILED
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.
+"#;
+        let err = parse_kani_output(sample).unwrap_err();
+        assert!(err.contains("invalid failure record for harness"));
+    }
+
+    #[test]
+    fn test_parse_failed_verdict_with_zero_failed_fails() {
+        let sample = r#"
+Checking harness test::contradiction_fail...
+ ** 0 of 2 failed
+VERIFICATION:- FAILED
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.
+"#;
+        let err = parse_kani_output(sample).unwrap_err();
+        assert!(err.contains("contradictory result for harness"));
     }
 }

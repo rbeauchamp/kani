@@ -280,8 +280,8 @@ mod tests {
         let log1_path = temp1.0.join("run.log");
         let log2_path = temp2.0.join("run.log");
 
-        let log1_content = "Checking harness h1...\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
-        let log2_content = "Checking harness h2...\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
+        let log1_content = "Checking harness h1...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
+        let log2_content = "Checking harness h2...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
 
         fs::write(&log1_path, log1_content).unwrap();
         fs::write(&log2_path, log2_content).unwrap();
@@ -319,7 +319,7 @@ mod tests {
     fn test_nonzero_producer_fails_closed() {
         let temp = TempTestDir::new("nonzero");
         let log_path = temp.0.join("run.log");
-        let log_content = "Checking harness h1...\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
+        let log_content = "Checking harness h1...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
         fs::write(&log_path, log_content).unwrap();
 
         let toolchain = sample_toolchain();
@@ -342,7 +342,7 @@ mod tests {
     fn test_missing_harness_set_fails_gate() {
         let temp = TempTestDir::new("missing_harness");
         let log_path = temp.0.join("run.log");
-        let log_content = "Checking harness h1...\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
+        let log_content = "Checking harness h1...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nComplete - 1 successfully verified harnesses, 0 failures, 1 total.\n";
         fs::write(&log_path, log_content).unwrap();
 
         let toolchain = sample_toolchain();
@@ -365,7 +365,7 @@ mod tests {
     fn test_extra_unexpected_harness_fails_gate() {
         let temp = TempTestDir::new("extra_harness");
         let log_path = temp.0.join("run.log");
-        let log_content = "Checking harness h1...\nVERIFICATION:- SUCCESSFUL\nChecking harness h_extra...\nVERIFICATION:- SUCCESSFUL\nComplete - 2 successfully verified harnesses, 0 failures, 2 total.\n";
+        let log_content = "Checking harness h1...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nChecking harness h_extra...\n ** 0 of 1 failed\nVERIFICATION:- SUCCESSFUL\nComplete - 2 successfully verified harnesses, 0 failures, 2 total.\n";
         fs::write(&log_path, log_content).unwrap();
 
         let toolchain = sample_toolchain();
