@@ -8,478 +8,443 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use crate::gate::{current_iso_timestamp, run_with_timeout, sha256_file};
-use crate::model::{
-    GateStatus, MutationReceipt, ProbeResult, RuntimeToolIdentities, ToolchainManifest,
+use crate::gate::{
+    CommandOutput, current_iso_timestamp, executable_sha256, run_with_timeout, sha256_file,
 };
-use crate::parser::parse_kani_output;
+use crate::model::{
+    GateStatus, MutationPurpose, MutationReceipt, ProbeResult, RuntimeToolIdentities,
+    ToolchainManifest, validate_sha256,
+};
+use crate::parser::{ParsedOutput, parse_kani_output};
 
 pub fn hash_bytes(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 
+pub enum MutationMode {
+    InfrastructureSelfTest,
+    Qualification { toolchain: ToolchainManifest, sha256: String },
+}
+
 pub struct MutationContext<'a> {
     pub kani_bin: PathBuf,
     pub fixtures_dir: &'a Path,
-    pub toolchain_path: &'a Path,
-    pub toolchain_sha256: String,
-    pub toolchain: ToolchainManifest,
+    pub mode: MutationMode,
 }
 
-#[allow(dead_code)]
 pub struct ResolvedTools {
-    pub kani_path: PathBuf,
-    pub cargo_kani_path: PathBuf,
-    pub cbmc_path: PathBuf,
-    pub kissat_path: PathBuf,
-    pub identities: RuntimeToolIdentities,
-}
-
-fn find_in_path(name: &str) -> Option<PathBuf> {
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
+    driver: PathBuf,
+    compiler: PathBuf,
+    cbmc: PathBuf,
+    kissat: PathBuf,
 }
 
 pub fn resolve_executable(path_or_name: &Path) -> Result<PathBuf, String> {
-    if path_or_name.components().count() > 1 {
-        if path_or_name.is_file() {
-            return Ok(path_or_name.to_path_buf());
-        }
-        return Err(format!("executable not found at: {}", path_or_name.display()));
-    }
-    let name = path_or_name.to_string_lossy();
-    if let Some(found) = find_in_path(&name) {
-        return Ok(found);
-    }
-    Err(format!("executable '{name}' not found in PATH"))
+    let path = if path_or_name.components().count() > 1 {
+        path_or_name.to_path_buf()
+    } else {
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join(path_or_name))
+            .find(|p| p.is_file())
+            .ok_or_else(|| format!("executable {} not found in PATH", path_or_name.display()))?
+    };
+    fs::canonicalize(&path)
+        .map_err(|e| format!("cannot resolve executable {}: {e}", path.display()))
 }
 
-pub fn discover_tool_binary(kani_bin: &Path, tool_name: &str) -> Result<PathBuf, String> {
-    // 1. Check parent directory of kani_bin
-    if let Some(parent) = kani_bin.parent() {
-        let direct = parent.join(tool_name);
-        if direct.is_file() {
-            return Ok(direct);
+impl ResolvedTools {
+    fn resolve(kani_bin: &Path) -> Result<Self, String> {
+        let supplied = resolve_executable(kani_bin)?;
+        let supplied_bin = supplied.parent().ok_or("Kani executable has no parent directory")?;
+        let driver = if supplied.file_name().is_some_and(|n| n == "kani-driver") {
+            supplied.clone()
+        } else {
+            supplied_bin.join("kani-driver")
+        };
+        if !driver.is_file() {
+            return Err("select the kani-driver binary (or a sibling kani executable) in one built checkout or unpacked bundle; global installers are not qualification executables".to_string());
         }
-        // If kani_bin is inside target/kani/bin, check relative scripts for cargo-kani
-        if tool_name == "cargo-kani" {
-            let script = parent.join("../../scripts/cargo-kani");
-            if script.is_file() {
-                return Ok(script);
+        let driver = fs::canonicalize(driver).map_err(|e| e.to_string())?;
+        // Match KaniInstallation's current_exe-based compiler lookup, including
+        // a sibling launcher whose driver points into another installation.
+        let bin = driver.parent().ok_or("Kani driver has no parent directory")?;
+        let backend = |name: &str| {
+            let bundled = bin.join(name);
+            if bundled.is_file() {
+                resolve_executable(&bundled)
+            } else {
+                resolve_executable(Path::new(name))
             }
-        }
+        };
+        let compiler = resolve_executable(&bin.join("kani-compiler"))?;
+        let cbmc = backend("cbmc")?;
+        let kissat = backend("kissat")?;
+        Ok(Self { driver, compiler, cbmc, kissat })
     }
 
-    // 2. Check KANI_HOME environment variable if present
-    if let Ok(kani_home) = std::env::var("KANI_HOME") {
-        let home_path = PathBuf::from(kani_home);
-        let direct = home_path.join("bin").join(tool_name);
-        if direct.is_file() {
-            return Ok(direct);
-        }
-        if let Ok(entries) = fs::read_dir(&home_path) {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join("bin").join(tool_name);
-                if candidate.is_file() {
-                    return Ok(candidate);
-                }
-            }
-        }
+    fn hashes(&self) -> Result<[String; 4], String> {
+        let hash = |path: &Path| {
+            sha256_file(path).map_err(|e| format!("cannot hash {}: {e}", path.display()))
+        };
+        Ok([hash(&self.driver)?, hash(&self.compiler)?, hash(&self.cbmc)?, hash(&self.kissat)?])
     }
 
-    // 3. Check default user kani install directory ~/.kani/kani-*/bin/<tool_name>
-    if let Some(home_dir) = std::env::var_os("HOME").map(PathBuf::from) {
-        let dot_kani = home_dir.join(".kani");
-        if dot_kani.is_dir()
-            && let Ok(entries) = fs::read_dir(&dot_kani)
+    fn command(&self, mode: &str, runtime_bin: &Path) -> Result<Command, String> {
+        let mut cmd = Command::new(&self.driver);
+        #[cfg(unix)]
         {
-            for entry in entries.flatten() {
-                let candidate = entry.path().join("bin").join(tool_name);
-                if candidate.is_file() {
-                    return Ok(candidate);
-                }
-            }
+            use std::os::unix::process::CommandExt;
+            cmd.arg0(mode);
         }
+        #[cfg(not(unix))]
+        return Err("qualification execution currently requires Unix".to_string());
+        let bin = self.driver.parent().ok_or("Kani driver has no parent directory")?;
+        let root = bin.parent().ok_or("Kani installation has no root")?;
+        let path = std::env::join_paths(
+            [runtime_bin.to_path_buf(), bin.to_path_buf(), root.join("pyroot/bin")]
+                .into_iter()
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+        )
+        .map_err(|e| e.to_string())?;
+        let pythonpath = std::env::join_paths(
+            [root.join("pyroot")]
+                .into_iter()
+                .chain(std::env::split_paths(&std::env::var_os("PYTHONPATH").unwrap_or_default())),
+        )
+        .map_err(|e| e.to_string())?;
+        cmd.env("PATH", path).env("PYTHONPATH", pythonpath);
+        // The direct driver selects its own compiler/sysroot. Loader overrides
+        // inherited from cargo must not select a different rustc shared library.
+        cmd.env_remove("LD_LIBRARY_PATH").env_remove("DYLD_FALLBACK_LIBRARY_PATH");
+        let channel_path = root.join("rust-toolchain-version");
+        match fs::read_to_string(&channel_path) {
+            Ok(channel) => {
+                cmd.env("RUSTUP_TOOLCHAIN", channel.trim());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot read bundled Rust toolchain identity: {e}")),
+        }
+        Ok(cmd)
     }
 
-    // 4. Check system PATH
-    if let Some(found) = find_in_path(tool_name) {
-        return Ok(found);
+    fn observe(&self, runtime_bin: &Path) -> Result<RuntimeToolIdentities, String> {
+        let [driver_hash, compiler_hash, cbmc_hash, kissat_hash] = self.hashes()?;
+        let mut cargo_kani = self.command("cargo-kani", runtime_bin)?;
+        cargo_kani.args(["--version", "--verbose"]);
+        let mut cbmc = Command::new(&self.cbmc);
+        cbmc.arg("--version");
+        let mut kissat = Command::new(&self.kissat);
+        kissat.arg("--version");
+        let identities = RuntimeToolIdentities {
+            cargo_kani_version: version(cargo_kani)?,
+            cargo_kani_sha256: driver_hash.clone(),
+            kani_sha256: driver_hash,
+            kani_compiler_sha256: compiler_hash,
+            cbmc_version: version(cbmc)?,
+            cbmc_sha256: cbmc_hash,
+            kissat_version: version(kissat)?,
+            kissat_sha256: kissat_hash,
+        };
+        identities.validate()?;
+        self.verify_hashes(&identities)?;
+        Ok(identities)
     }
 
-    Err(format!("could not locate required runtime tool binary: {tool_name}"))
+    fn verify_hashes(&self, observed: &RuntimeToolIdentities) -> Result<(), String> {
+        if self.hashes()?
+            != [
+                observed.kani_sha256.clone(),
+                observed.kani_compiler_sha256.clone(),
+                observed.cbmc_sha256.clone(),
+                observed.kissat_sha256.clone(),
+            ]
+        {
+            return Err("runtime binaries changed during qualification".to_string());
+        }
+        Ok(())
+    }
 }
 
-pub fn resolve_runtime_tools(kani_bin: &Path) -> Result<ResolvedTools, String> {
-    let kani_path = resolve_executable(kani_bin)?;
-    let cargo_kani_path = discover_tool_binary(&kani_path, "cargo-kani")?;
-    let cbmc_path = discover_tool_binary(&kani_path, "cbmc")?;
-    let kissat_path = discover_tool_binary(&kani_path, "kissat")?;
-
-    let kani_sha256 = sha256_file(&kani_path).map_err(|e| format!("failed to hash kani: {e}"))?;
-    let cargo_kani_sha256 =
-        sha256_file(&cargo_kani_path).map_err(|e| format!("failed to hash cargo-kani: {e}"))?;
-    let cbmc_sha256 = sha256_file(&cbmc_path).map_err(|e| format!("failed to hash cbmc: {e}"))?;
-    let kissat_sha256 =
-        sha256_file(&kissat_path).map_err(|e| format!("failed to hash kissat: {e}"))?;
-
-    // Query cargo-kani version (--version --verbose)
-    let cargo_kani_out = Command::new(&cargo_kani_path)
-        .arg("--version")
-        .arg("--verbose")
-        .output()
-        .map_err(|e| format!("failed to run cargo-kani --version --verbose: {e}"))?;
-    let mut cargo_kani_version = String::from_utf8_lossy(&cargo_kani_out.stdout).trim().to_string();
-
-    // If cargo-kani is the dev wrapper or launcher returning a single line, check kani-driver with arg0
-    if cargo_kani_version.starts_with("cargo-kani ")
-        && let Some(parent) = kani_path.parent()
+fn version(cmd: Command) -> Result<String, String> {
+    let output = run_with_timeout(cmd, Duration::from_secs(30))?;
+    if !output.status.success()
+        || output.stdout.trim().is_empty()
+        || !output.stderr.trim().is_empty()
     {
-        let driver = parent.join("kani-driver");
-        if driver.is_file() {
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                if let Ok(driver_out) = Command::new(&driver)
-                    .arg0("cargo-kani")
-                    .arg("--version")
-                    .arg("--verbose")
-                    .output()
-                {
-                    let driver_str = String::from_utf8_lossy(&driver_out.stdout).trim().to_string();
-                    if driver_str.contains("Kani Rust Verifier") {
-                        cargo_kani_version = driver_str;
-                    }
-                }
-            }
-        }
+        return Err(format!("runtime version query failed: {}\n{}", output.status, output.stderr));
     }
+    Ok(output.stdout.trim().to_string())
+}
 
-    // Query cbmc version (--version)
-    let cbmc_out = Command::new(&cbmc_path)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("failed to run cbmc --version: {e}"))?;
-    let cbmc_version = String::from_utf8_lossy(&cbmc_out.stdout).trim().to_string();
-
-    // Query kissat version (--version)
-    let kissat_out = Command::new(&kissat_path)
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("failed to run kissat --version: {e}"))?;
-    let kissat_version = String::from_utf8_lossy(&kissat_out.stdout).trim().to_string();
-
-    Ok(ResolvedTools {
-        kani_path,
-        cargo_kani_path,
-        cbmc_path,
-        kissat_path,
-        identities: RuntimeToolIdentities {
-            cargo_kani_version,
-            cargo_kani_sha256,
-            kani_sha256,
-            cbmc_version,
-            cbmc_sha256,
-            kissat_version,
-            kissat_sha256,
-        },
-    })
+fn validate_versions(
+    observed: &RuntimeToolIdentities,
+    cargo_kani: &str,
+    cbmc: &str,
+    kissat: &str,
+) -> Result<(), String> {
+    if observed.cbmc_version != cbmc {
+        return Err(format!(
+            "runtime CBMC mismatch: observed {:?}, expected {cbmc:?}",
+            observed.cbmc_version
+        ));
+    }
+    if observed.kissat_version != kissat {
+        return Err(format!(
+            "runtime Kissat mismatch: observed {:?}, expected {kissat:?}",
+            observed.kissat_version
+        ));
+    }
+    if observed.cargo_kani_version != cargo_kani {
+        return Err(format!(
+            "cargo-kani identity mismatch:\nobserved:\n{}\nexpected:\n{cargo_kani}",
+            observed.cargo_kani_version
+        ));
+    }
+    Ok(())
 }
 
 pub fn validate_toolchain_identities(
     observed: &RuntimeToolIdentities,
     expected: &ToolchainManifest,
 ) -> Result<(), String> {
-    if observed.cbmc_version != expected.cbmc_version {
-        return Err(format!(
-            "runtime CBMC mismatch: observed {:?}, expected {:?}",
-            observed.cbmc_version, expected.cbmc_version
-        ));
-    }
-    if observed.kissat_version != expected.kissat_version {
-        return Err(format!(
-            "runtime Kissat mismatch: observed {:?}, expected {:?}",
-            observed.kissat_version, expected.kissat_version
-        ));
-    }
-    if observed.cargo_kani_version != expected.cargo_kani_version {
-        return Err(format!(
-            "cargo-kani identity mismatch:\nobserved:\n{}\nexpected:\n{}",
-            observed.cargo_kani_version, expected.cargo_kani_version
-        ));
-    }
-    Ok(())
+    observed.validate()?;
+    validate_versions(
+        observed,
+        &expected.cargo_kani_version,
+        &expected.cbmc_version,
+        &expected.kissat_version,
+    )
 }
 
-struct SnapshotGuard(PathBuf);
-impl Drop for SnapshotGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+fn fixture_hashes(directory: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut hashes = BTreeMap::new();
+    for entry in fs::read_dir(directory).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.path().extension().is_some_and(|ext| ext == "rs") {
+            let name = entry.file_name().into_string().map_err(|_| "fixture name is not UTF-8")?;
+            hashes.insert(name, sha256_file(&entry.path()).map_err(|e| e.to_string())?);
+        }
     }
+    let expected = ["backend_probe.rs", "inadequate_unwind.rs", "vacuity.rs"];
+    if hashes.keys().map(String::as_str).collect::<Vec<_>>() != expected {
+        return Err("mutation fixture inventory differs from the three declared probes".to_string());
+    }
+    Ok(hashes)
+}
+
+fn warning_dispositions() -> BTreeMap<String, String> {
+    // call_single_file.rs injects register_tool and force-warns unstable_features
+    // even for these feature-free fixtures. No other warning is admitted.
+    BTreeMap::from([
+        ("use of an unstable feature".to_string(), "Kani injects feature(register_tool) for single-file compilation; the public fixtures use no unstable Rust feature".to_string()),
+        ("1 warning emitted".to_string(), "rustc summary of the reviewed register_tool warning".to_string()),
+    ])
+}
+
+fn parse_probe_output(output: &CommandOutput) -> Result<ParsedOutput, String> {
+    parse_kani_output(&format!("{}\n{}", output.stdout, output.stderr))
+}
+
+fn single_harness(parsed: &ParsedOutput, name: &str) -> bool {
+    let warnings = warning_dispositions();
+    parsed.validate_completion().is_ok()
+        && parsed.harnesses.len() == 1
+        && parsed.harnesses.contains_key(name)
+        && parsed.warnings.iter().all(|warning| warnings.contains_key(warning))
+        && parsed.unsupported_constructs.is_empty()
 }
 
 pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, String> {
-    // 1. Resolve runtime binaries and capture toolchain identities
-    let resolved = resolve_runtime_tools(&ctx.kani_bin)?;
-    let observed_runtime = resolved.identities;
-
-    // 2. Hash source fixtures prior to any operations
-    let mut fixture_hashes = BTreeMap::new();
-    for entry in fs::read_dir(ctx.fixtures_dir).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "rs") {
-            let hash = sha256_file(&path).map_err(|e| e.to_string())?;
-            fixture_hashes.insert(path.file_name().unwrap().to_string_lossy().to_string(), hash);
+    let resolved = ResolvedTools::resolve(&ctx.kani_bin)?;
+    let snapshot = tempfile::Builder::new()
+        .prefix("kani-qualify-")
+        .tempdir()
+        .map_err(|e| format!("cannot create private mutation snapshot: {e}"))?;
+    let runtime_bin = snapshot.path().join("bin");
+    fs::create_dir(&runtime_bin).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    for (name, binary) in [("cbmc", &resolved.cbmc), ("kissat", &resolved.kissat)] {
+        std::os::unix::fs::symlink(binary, runtime_bin.join(name)).map_err(|e| e.to_string())?;
+    }
+    let observed_runtime = resolved.observe(&runtime_bin)?;
+    let (purpose, profile, toolchain_sha256) = match &ctx.mode {
+        MutationMode::InfrastructureSelfTest => {
+            (MutationPurpose::InfrastructureSelfTest, None, None)
         }
-    }
-    let toolchain_sha256 = ctx.toolchain_sha256.clone();
-    let gate_sha256 = match std::env::current_exe() {
-        Ok(exe) => sha256_file(&exe).unwrap_or_else(|_| hash_bytes(b"kani-qualify-v0.1.0")),
-        Err(_) => hash_bytes(b"kani-qualify-v0.1.0"),
+        MutationMode::Qualification { toolchain, sha256 } => {
+            toolchain.validate()?;
+            validate_sha256(sha256)?;
+            validate_toolchain_identities(&observed_runtime, toolchain)?;
+            (
+                MutationPurpose::QualificationMutations,
+                Some(toolchain.profile.clone()),
+                Some(sha256.clone()),
+            )
+        }
     };
-
-    // 3. Create isolated snapshot directory and copy fixtures + manifest
-    let timestamp_nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let snapshot_root = std::env::temp_dir().join(format!(
-        "kani-qualify-snapshot-{}-{}",
-        std::process::id(),
-        timestamp_nanos
-    ));
-    fs::create_dir_all(&snapshot_root)
-        .map_err(|e| format!("failed to create snapshot dir {}: {e}", snapshot_root.display()))?;
-    let _snapshot_guard = SnapshotGuard(snapshot_root.clone());
-
-    let snapshot_fixtures = snapshot_root.join("fixtures");
-    fs::create_dir_all(&snapshot_fixtures).map_err(|e| {
-        format!("failed to create snapshot fixtures dir {}: {e}", snapshot_fixtures.display())
-    })?;
-
-    for name in fixture_hashes.keys() {
-        let src = ctx.fixtures_dir.join(name);
-        let dst = snapshot_fixtures.join(name);
-        fs::copy(&src, &dst)
-            .map_err(|e| format!("failed to copy fixture {name} into snapshot: {e}"))?;
+    // All proof execution is dominated by the mode's identity admission above.
+    let gate_sha256 = executable_sha256()?;
+    let fixtures = fixture_hashes(ctx.fixtures_dir)?;
+    let snapshot_fixtures = snapshot.path().join("fixtures");
+    fs::create_dir(&snapshot_fixtures).map_err(|e| e.to_string())?;
+    for name in fixtures.keys() {
+        fs::copy(ctx.fixtures_dir.join(name), snapshot_fixtures.join(name))
+            .map_err(|e| format!("cannot snapshot fixture {name}: {e}"))?;
+    }
+    let snapshot_hashes = fixture_hashes(&snapshot_fixtures)?;
+    if snapshot_hashes != fixtures {
+        return Err("fixture bytes changed while creating their execution snapshot".to_string());
     }
 
-    let snapshot_toolchain = snapshot_root.join("toolchain.json");
-    fs::copy(ctx.toolchain_path, &snapshot_toolchain).map_err(|e| {
-        format!(
-            "failed to copy toolchain manifest into snapshot {}: {e}",
-            snapshot_toolchain.display()
-        )
-    })?;
-
-    // 4. Hash snapshot files and verify match with pre-run digests
-    let mut snapshot_hashes = BTreeMap::new();
-    for name in fixture_hashes.keys() {
-        let path = snapshot_fixtures.join(name);
-        let hash = sha256_file(&path).map_err(|e| e.to_string())?;
-        snapshot_hashes.insert(name.clone(), hash);
-    }
-    if snapshot_hashes != fixture_hashes {
-        return Err("snapshot fixture hashes do not match source fixture hashes".to_string());
-    }
-
+    let command = |fixture: &str| -> Result<Command, String> {
+        let mut cmd = resolved.command("kani", &runtime_bin)?;
+        cmd.current_dir(snapshot.path())
+            .arg(snapshot_fixtures.join(fixture))
+            .arg("--output-format=terse");
+        Ok(cmd)
+    };
     let mut results = BTreeMap::new();
-
-    // Probe 1: Inadequate unwind probe: must fail specifically due to unwinding assertion
-    let inadequate_path = snapshot_fixtures.join("inadequate_unwind.rs");
-    let mut cmd = Command::new(&ctx.kani_bin);
-    cmd.arg(&inadequate_path).arg("--output-format=terse");
-    let inadequate = run_with_timeout(cmd, Duration::from_secs(120))?;
-    let ineq_detected =
-        !inadequate.status.success() && inadequate.stdout.contains("unwinding assertion");
+    let inadequate = run_with_timeout(command("inadequate_unwind.rs")?, Duration::from_secs(120))?;
+    let inadequate_detected = inadequate.status.code() == Some(1)
+        && inadequate.stdout.contains("unwinding assertion")
+        && parse_probe_output(&inadequate).is_ok_and(|p| {
+            single_harness(&p, "inadequate_unwind") && p.harnesses["inadequate_unwind"].is_fail()
+        });
     results.insert(
         "inadequate_unwind".to_string(),
         ProbeResult {
             returncode: inadequate.status.code(),
             output_sha256: Some(hash_bytes(inadequate.stdout.as_bytes())),
-            ..ProbeResult::new(
-                ineq_detected,
-                "failed to detect inadequate unwind via unwinding assertion",
-            )
+            stderr_sha256: Some(hash_bytes(inadequate.stderr.as_bytes())),
+            ..ProbeResult::new(inadequate_detected, "missing complete expected unwinding failure")
         },
     );
 
-    // Probe 2: Vacuity probe: fail-closed (parser errors or verifier crashes are NOT detections)
-    let vacuity_path = snapshot_fixtures.join("vacuity.rs");
-    let mut cmd = Command::new(&ctx.kani_bin);
-    cmd.arg(&vacuity_path).arg("--output-format=terse");
-    let vacuity = run_with_timeout(cmd, Duration::from_secs(120))?;
-    let parsed_vacuity = parse_kani_output(&vacuity.stdout);
-    let vacuity_detected = match parsed_vacuity {
-        Ok(parsed) => {
-            let cover_failed =
-                parsed.harnesses.values().any(|h| h.covers.is_some_and(|c| c.satisfied < c.total));
-            cover_failed || vacuity.stdout.contains("UNSATISFIED")
-        }
-        Err(_) => false, // Fail-closed: parse failure is not vacuity detection
-    };
+    let vacuity = run_with_timeout(command("vacuity.rs")?, Duration::from_secs(120))?;
+    let vacuity_detected = vacuity.status.success()
+        && parse_probe_output(&vacuity).is_ok_and(|p| {
+            single_harness(&p, "vacuity")
+                && p.harnesses["vacuity"].covers.is_some_and(|c| c.satisfied < c.total)
+        });
     results.insert(
         "vacuity".to_string(),
         ProbeResult {
             kani_returncode: vacuity.status.code(),
             output_sha256: Some(hash_bytes(vacuity.stdout.as_bytes())),
-            ..ProbeResult::new(vacuity_detected, "vacuity was not detected")
+            stderr_sha256: Some(hash_bytes(vacuity.stderr.as_bytes())),
+            ..ProbeResult::new(
+                vacuity_detected,
+                "vacuity did not produce a complete unsatisfied cover result",
+            )
         },
     );
 
-    // Probe 3: Timeout probe: child process termination
     let mut sleep_cmd = Command::new("sleep");
     sleep_cmd.arg("5");
-    let timeout_result = run_with_timeout(sleep_cmd, Duration::from_millis(200));
-    let timeout_detected = match timeout_result {
-        Err(e) => e.contains("timed out"),
-        Ok(_) => false,
-    };
+    let timeout_detected = run_with_timeout(sleep_cmd, Duration::from_millis(200))
+        .is_err_and(|e| e.contains("timed out"));
     results.insert(
         "timeout".to_string(),
-        ProbeResult::new(timeout_detected, "timeout probe did not trigger timeout"),
+        ProbeResult::new(timeout_detected, "timeout was not detected"),
     );
 
-    // Probe 4: Positive control probe: baseline verification succeeds and parses cleanly
-    let probe_path = snapshot_fixtures.join("backend_probe.rs");
-    let mut cmd = Command::new(&ctx.kani_bin);
-    cmd.arg(&probe_path).arg("--output-format=terse");
-    let positive = run_with_timeout(cmd, Duration::from_secs(120))?;
-    let positive_code = positive.status.code();
-    let complete_stdout = positive.stdout;
-    let parsed_positive = parse_kani_output(&complete_stdout);
-    let positive_detected =
-        positive.status.success() && parsed_positive.as_ref().is_ok_and(|p| p.is_pass());
+    let positive = run_with_timeout(command("backend_probe.rs")?, Duration::from_secs(120))?;
+    let parsed_positive = parse_probe_output(&positive);
+    let positive_detected = positive.status.success()
+        && parsed_positive.as_ref().is_ok_and(|p| {
+            single_harness(p, "backend_probe")
+                && p.harnesses["backend_probe"].is_pass()
+                && p.harnesses["backend_probe"].covers_satisfied()
+                && p.observed_unreachable_map().is_empty()
+        });
     results.insert(
         "positive_control".to_string(),
         ProbeResult {
-            returncode: positive_code,
-            output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
-            ..ProbeResult::new(
-                positive_detected,
-                "positive control failed to verify or parse as valid pass",
-            )
+            returncode: positive.status.code(),
+            output_sha256: Some(hash_bytes(positive.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(positive.stderr.as_bytes())),
+            ..ProbeResult::new(positive_detected, "positive control did not complete successfully")
         },
     );
-
-    // Probe 5: Parser truncation probe: truncated logs missing summary must be detected and rejected
-    let (truncation_detected, truncated_stdout) = if positive_detected {
-        let truncated = complete_stdout.split("Complete -").next().unwrap_or("");
-        let parsed_trunc = parse_kani_output(truncated);
-        let rejected = parsed_trunc.as_ref().map_or(true, |p| !p.is_pass());
-        let distinct = truncated != complete_stdout && !truncated.is_empty();
-        (distinct && rejected, truncated)
-    } else {
-        (false, "")
-    };
+    let truncated = positive.stdout.split("Complete -").next().unwrap_or("");
+    let truncation_detected = positive_detected
+        && truncated != positive.stdout
+        && !truncated.is_empty()
+        && parse_kani_output(truncated).map_or(true, |p| !p.is_pass());
     results.insert(
         "parser_truncation".to_string(),
         ProbeResult {
-            positive_control_returncode: positive_code,
-            complete_output_sha256: Some(hash_bytes(complete_stdout.as_bytes())),
-            truncated_output_sha256: Some(hash_bytes(truncated_stdout.as_bytes())),
+            positive_control_returncode: positive.status.code(),
+            complete_output_sha256: Some(hash_bytes(positive.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(positive.stderr.as_bytes())),
+            truncated_output_sha256: Some(hash_bytes(truncated.as_bytes())),
             ..ProbeResult::new(
                 truncation_detected,
-                "truncated output was accepted or could not be derived from positive control",
+                "truncated output was accepted or positive control failed",
             )
         },
     );
 
-    // Probe 6: Toolchain runtime version validation probe (fail-closed detection of mismatched runtime binaries)
-    let mut mismatched_cbmc_manifest = ctx.toolchain.clone();
-    mismatched_cbmc_manifest.cbmc_version =
-        if observed_runtime.cbmc_version == "6.10.0 (cbmc-6.10.0)" {
-            "6.8.0 (cbmc-6.8.0)".to_string()
-        } else {
-            "6.10.0 (cbmc-6.10.0)".to_string()
-        };
-    let cbmc_mismatch_detected =
-        validate_toolchain_identities(&observed_runtime, &mismatched_cbmc_manifest).is_err();
-
-    let mut mismatched_kissat_manifest = ctx.toolchain.clone();
-    mismatched_kissat_manifest.kissat_version = "0.0.0-bogus".to_string();
-    let kissat_mismatch_detected =
-        validate_toolchain_identities(&observed_runtime, &mismatched_kissat_manifest).is_err();
-
-    let mut matching_manifest = ctx.toolchain.clone();
-    matching_manifest.cbmc_version = observed_runtime.cbmc_version.clone();
-    matching_manifest.kissat_version = observed_runtime.kissat_version.clone();
-    matching_manifest.cargo_kani_version = observed_runtime.cargo_kani_version.clone();
-    let match_accepted =
-        validate_toolchain_identities(&observed_runtime, &matching_manifest).is_ok();
-
-    let toolchain_probe_detected =
-        cbmc_mismatch_detected && kissat_mismatch_detected && match_accepted;
+    let cbmc_mismatch = format!("{}-mismatch", observed_runtime.cbmc_version);
+    let kissat_mismatch = format!("{}-mismatch", observed_runtime.kissat_version);
+    let cargo_mismatch = format!("{}-mismatch", observed_runtime.cargo_kani_version);
+    let mismatches_detected = [
+        (&*observed_runtime.cargo_kani_version, &*cbmc_mismatch, &*observed_runtime.kissat_version),
+        (&*observed_runtime.cargo_kani_version, &*observed_runtime.cbmc_version, &*kissat_mismatch),
+        (&*cargo_mismatch, &*observed_runtime.cbmc_version, &*observed_runtime.kissat_version),
+    ]
+    .into_iter()
+    .all(|(cargo, cbmc, kissat)| {
+        validate_versions(&observed_runtime, cargo, cbmc, kissat).is_err()
+    });
     results.insert(
         "bad_runtime_cbmc".to_string(),
-        ProbeResult::new(
-            toolchain_probe_detected,
-            "toolchain validation failed to detect invalid runtime CBMC or Kissat version mismatch",
-        ),
+        ProbeResult::new(mismatches_detected, "runtime identity mismatch was accepted"),
     );
 
-    // Probe 7: Backend failure probe: verifier must fail-closed on backend-stage failure
-    let mut invalid_cmd = Command::new(&ctx.kani_bin);
-    invalid_cmd
-        .arg(&probe_path)
-        .arg("--output-format=terse")
-        .arg("-Z")
-        .arg("unstable-options")
-        .arg("--cbmc-args")
-        .arg("--unsupported-cbmc-option-probe-fail");
-    let invalid_run = run_with_timeout(invalid_cmd, Duration::from_secs(60))?;
-    let backend_failure_detected = !invalid_run.status.success()
-        && invalid_run.status.code() != Some(2)
-        && (invalid_run.stdout.contains("CBMC failed")
-            || invalid_run.stdout.contains("VERIFICATION:- FAILED")
-            || invalid_run.stdout.contains("Unknown option")
-            || invalid_run.stderr.contains("Unknown option"));
+    let mut invalid_cmd = command("backend_probe.rs")?;
+    invalid_cmd.args([
+        "-Z",
+        "unstable-options",
+        "--cbmc-args",
+        "--unsupported-cbmc-option-probe-fail",
+    ]);
+    let invalid = run_with_timeout(invalid_cmd, Duration::from_secs(60))?;
+    let backend_detected = invalid.status.code().is_some_and(|code| code != 0 && code != 2)
+        && (invalid.stdout.contains("CBMC failed")
+            || invalid.stdout.contains("Unknown option")
+            || invalid.stderr.contains("Unknown option"));
     results.insert(
         "backend_failure".to_string(),
         ProbeResult {
-            returncode: invalid_run.status.code(),
-            output_sha256: Some(hash_bytes(invalid_run.stdout.as_bytes())),
-            ..ProbeResult::new(
-                backend_failure_detected,
-                "invalid backend configuration did not produce expected backend failure",
-            )
+            returncode: invalid.status.code(),
+            output_sha256: Some(hash_bytes(invalid.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(invalid.stderr.as_bytes())),
+            ..ProbeResult::new(backend_detected, "expected backend failure was not detected")
         },
     );
 
-    // 5. Post-probe check: verify original source fixtures and manifest have not drifted
-    for (name, expected_hash) in &fixture_hashes {
-        let src = ctx.fixtures_dir.join(name);
-        let current_hash = sha256_file(&src).map_err(|e| e.to_string())?;
-        if current_hash != *expected_hash {
-            return Err(format!("source fixture {name} was modified during mutation execution"));
-        }
+    if fixture_hashes(ctx.fixtures_dir)? != fixtures
+        || fixture_hashes(&snapshot_fixtures)? != snapshot_hashes
+    {
+        return Err("source or execution fixture bytes changed during mutation probes".to_string());
     }
-    let post_toolchain_sha256 = sha256_file(ctx.toolchain_path).map_err(|e| e.to_string())?;
-    if post_toolchain_sha256 != toolchain_sha256 {
-        return Err("toolchain manifest modified during mutation execution".to_string());
-    }
-
-    let all_detected = results.values().all(|r| r.detected);
-
+    resolved.verify_hashes(&observed_runtime)?;
+    let status =
+        if results.values().all(|r| r.detected) { GateStatus::Pass } else { GateStatus::Fail };
     Ok(MutationReceipt {
-        schema: 1,
-        profile: ctx.toolchain.profile.clone(),
+        schema: 2,
+        purpose,
+        profile,
         executed_at: current_iso_timestamp(),
         gate_sha256,
         toolchain_sha256,
         observed_runtime,
         snapshot_hashes,
-        fixtures: fixture_hashes,
+        fixtures,
+        warning_dispositions: warning_dispositions(),
         results,
-        status: if all_detected { GateStatus::Pass } else { GateStatus::Fail },
+        status,
     })
 }
 
@@ -494,12 +459,13 @@ mod tests {
 
         let mut observed = RuntimeToolIdentities {
             cargo_kani_version: manifest.cargo_kani_version.clone(),
-            cargo_kani_sha256: "0000".to_string(),
-            kani_sha256: "1111".to_string(),
+            cargo_kani_sha256: "0".repeat(64),
+            kani_sha256: "1".repeat(64),
+            kani_compiler_sha256: "4".repeat(64),
             cbmc_version: manifest.cbmc_version.clone(),
-            cbmc_sha256: "2222".to_string(),
+            cbmc_sha256: "2".repeat(64),
             kissat_version: manifest.kissat_version.clone(),
-            kissat_sha256: "3333".to_string(),
+            kissat_sha256: "3".repeat(64),
         };
 
         // Exact match passes
@@ -525,12 +491,8 @@ mod tests {
 
     #[test]
     fn test_snapshot_isolation_and_source_drift_detection() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "kani-test-drift-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        fs::create_dir_all(&temp_dir).unwrap();
-        let fixture_file = temp_dir.join("test_fixture.rs");
+        let temp_dir = tempfile::tempdir().unwrap();
+        let fixture_file = temp_dir.path().join("test_fixture.rs");
         fs::write(&fixture_file, b"fn main() {}").unwrap();
 
         let initial_hash = sha256_file(&fixture_file).unwrap();
@@ -540,7 +502,5 @@ mod tests {
         fs::write(&fixture_file, b"fn main() { panic!(); }").unwrap();
         let modified_hash = sha256_file(&fixture_file).unwrap();
         assert_ne!(initial_hash, modified_hash);
-
-        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

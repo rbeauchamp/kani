@@ -3,6 +3,22 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path};
+
+pub fn validate_sha256(value: &str) -> Result<(), String> {
+    if value.len() != 64 || !value.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    {
+        return Err("expected a lowercase SHA-256 digest".to_string());
+    }
+    Ok(())
+}
+
+fn relative_path(value: &str) -> bool {
+    !value.is_empty()
+        && Path::new(value)
+            .components()
+            .all(|c| matches!(c, Component::CurDir | Component::Normal(_)))
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -53,6 +69,8 @@ pub struct ProbeResult {
     pub positive_control_returncode: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub complete_output_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,11 +141,21 @@ impl ToolchainManifest {
             return Err("toolchain manifest must define at least one platform".to_string());
         }
         for (pname, platform) in &self.platforms {
+            if pname.trim().is_empty() {
+                return Err("platform name must be non-empty".to_string());
+            }
             if platform.runner.trim().is_empty() {
                 return Err(format!("platform {pname} has empty runner"));
             }
             if platform.artifacts.is_empty() {
                 return Err(format!("platform {pname} has no artifacts"));
+            }
+            let mut names = BTreeSet::new();
+            for artifact in &platform.artifacts {
+                if !relative_path(&artifact.name) || !names.insert(&artifact.name) {
+                    return Err(format!("invalid or duplicate artifact name: {}", artifact.name));
+                }
+                validate_sha256(&artifact.sha256)?;
             }
         }
         Ok(())
@@ -206,6 +234,18 @@ impl ConsumerManifest {
         if unique_harnesses.len() != self.expected_harnesses.len() {
             return Err("consumer expected_harnesses contains duplicates".to_string());
         }
+        if self.expected_harnesses.iter().any(|name| {
+            name.is_empty()
+                || !name.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b':')
+        }) {
+            return Err("consumer contains an invalid harness name".to_string());
+        }
+        if !relative_path(&self.project_dir)
+            || !relative_path(&self.cargo_manifest)
+            || self.cargo_config.as_deref().is_some_and(|p| !relative_path(p))
+        {
+            return Err("consumer paths must stay within the declared checkout".to_string());
+        }
         if !self.kani_flags.is_empty() {
             return Err(
                 "core-v1 qualifies default verification flags only (empty kani_flags)".to_string()
@@ -270,32 +310,79 @@ impl ConsumerManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RuntimeToolIdentities {
     pub cargo_kani_version: String,
     pub cargo_kani_sha256: String,
     pub kani_sha256: String,
+    pub kani_compiler_sha256: String,
     pub cbmc_version: String,
     pub cbmc_sha256: String,
     pub kissat_version: String,
     pub kissat_sha256: String,
 }
 
+impl RuntimeToolIdentities {
+    pub fn validate(&self) -> Result<(), String> {
+        for digest in [
+            &self.cargo_kani_sha256,
+            &self.kani_sha256,
+            &self.kani_compiler_sha256,
+            &self.cbmc_sha256,
+            &self.kissat_sha256,
+        ] {
+            validate_sha256(digest)?;
+        }
+        if [&self.cargo_kani_version, &self.cbmc_version, &self.kissat_version]
+            .iter()
+            .any(|v| v.trim().is_empty())
+        {
+            return Err("runtime version observations must be non-empty".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MutationPurpose {
+    InfrastructureSelfTest,
+    QualificationMutations,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationReceipt {
     pub schema: u32,
-    pub profile: String,
+    pub purpose: MutationPurpose,
+    pub profile: Option<String>,
     pub executed_at: String,
     pub gate_sha256: String,
-    pub toolchain_sha256: String,
+    pub toolchain_sha256: Option<String>,
     pub observed_runtime: RuntimeToolIdentities,
     pub snapshot_hashes: BTreeMap<String, String>,
+    pub warning_dispositions: BTreeMap<String, String>,
     pub fixtures: BTreeMap<String, String>,
     pub results: BTreeMap<String, ProbeResult>,
     pub status: GateStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunContext {
+    pub consumer_sha256: String,
+    pub platform: String,
+    pub runtime: RuntimeToolIdentities,
+    pub source_commit: String,
+    pub source_tree: String,
+    pub toolchain_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct InputRunEvidence {
+    pub context: RunContext,
+    pub cwd: String,
+    pub expected_harnesses: Vec<String>,
     pub run_id: String,
     pub log_path: String,
     pub sha256: String,
@@ -305,16 +392,95 @@ pub struct InputRunEvidence {
     pub terminating_signal: Option<i32>,
 }
 
+impl InputRunEvidence {
+    /// Only the declared default-check invocation can contribute to a receipt.
+    /// The producer attests that argv includes all effective configuration flags.
+    pub fn validate(
+        &self,
+        toolchain: &ToolchainManifest,
+        consumer: &ConsumerManifest,
+        toolchain_sha256: &str,
+        consumer_sha256: &str,
+    ) -> Result<(), String> {
+        if self.run_id.trim().is_empty() || self.exit_code != 0 || self.terminating_signal.is_some()
+        {
+            return Err(
+                "run requires an identity and observed normal successful termination".to_string()
+            );
+        }
+        validate_sha256(&self.sha256)?;
+        if self.context.toolchain_sha256 != toolchain_sha256
+            || self.context.consumer_sha256 != consumer_sha256
+            || self.context.source_commit != consumer.source_commit
+            || self.context.source_tree != consumer.source_tree
+        {
+            return Err(format!(
+                "run {} qualification context differs from its manifests",
+                self.run_id
+            ));
+        }
+        if !toolchain.platforms.contains_key(&self.context.platform) {
+            return Err(format!("run {} uses an undeclared platform", self.run_id));
+        }
+        crate::mutations::validate_toolchain_identities(&self.context.runtime, toolchain)?;
+        let selected: BTreeSet<_> = self.expected_harnesses.iter().collect();
+        let allowed: BTreeSet<_> = consumer.expected_harnesses.iter().collect();
+        if selected.is_empty()
+            || selected.len() != self.expected_harnesses.len()
+            || !selected.is_subset(&allowed)
+        {
+            return Err("run harness selection must be a non-empty unique subset of the profile"
+                .to_string());
+        }
+        let cwd = Path::new(&self.cwd);
+        if !cwd.is_absolute() || cwd.components().any(|c| matches!(c, Component::ParentDir)) {
+            return Err("run cwd must be an absolute path without parent traversal".to_string());
+        }
+        let mut argv = vec!["cargo".to_string()];
+        if let Some(config) = &consumer.cargo_config {
+            argv.extend(["--config".to_string(), cwd.join(config).to_string_lossy().into_owned()]);
+        }
+        argv.extend([
+            "kani".to_string(),
+            "--manifest-path".to_string(),
+            cwd.join(&consumer.cargo_manifest).to_string_lossy().into_owned(),
+            "--exact".to_string(),
+            "--output-format=terse".to_string(),
+        ]);
+        for harness in &self.expected_harnesses {
+            argv.extend(["--harness".to_string(), harness.clone()]);
+        }
+        if self.argv != argv {
+            return Err(format!(
+                "run {} invocation differs from the admitted core-v1 command",
+                self.run_id
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HarnessSummary {
     pub harness: String,
     pub verdict: HarnessVerdict,
+    pub failed_checks: u32,
+    pub total_checks: u32,
+    pub undetermined_checks: u32,
+    pub undetermined_covers: u32,
     pub unreachable: Option<u32>,
+    pub unreachable_covers: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covers: Option<CoverMetrics>,
 }
 
 impl HarnessSummary {
+    pub fn covers_satisfied(&self) -> bool {
+        self.undetermined_covers == 0
+            && self.unreachable_covers == 0
+            && self.covers.is_none_or(|c| c.satisfied == c.total)
+    }
+
     pub fn is_pass(&self) -> bool {
         self.verdict == HarnessVerdict::Pass
     }
@@ -329,6 +495,7 @@ impl HarnessSummary {
 pub struct CompositeReceipt {
     pub schema: u32,
     pub profile: String,
+    pub consumer_status: String,
     pub executed_at: String,
     pub gate_sha256: String,
     pub toolchain_sha256: String,
@@ -453,7 +620,12 @@ mod tests {
         let h = HarnessSummary {
             harness: "test::h".to_string(),
             verdict: HarnessVerdict::Pass,
+            failed_checks: 0,
+            total_checks: 2,
+            undetermined_checks: 0,
+            undetermined_covers: 0,
             unreachable: Some(0),
+            unreachable_covers: 0,
             covers: Some(CoverMetrics { satisfied: 2, total: 2 }),
         };
         let serialized = serde_json::to_string(&h).unwrap();

@@ -3,8 +3,8 @@
 
 # Qualified Kani downstream program
 
-This directory is the source of truth for an unofficial downstream qualification
-program built on Kani. Its purpose is to make carefully selected upstream progress
+This directory records the contracts and evidence for an unofficial downstream
+qualification program built on Kani. Its purpose is to make carefully selected upstream progress
 available to mission-critical downstream users sooner while preserving explicit
 scope, reproducible evidence, and a small upstreamable patch delta.
 
@@ -23,15 +23,18 @@ been proved correct.
 
 When records disagree, use this order:
 
-1. [`roadmap.md`](roadmap.md) owns work ordering, live status, promotion gates,
-   and the next action.
+1. [GitHub issues](https://github.com/rbeauchamp/kani/issues) own actionable
+   acceptance criteria; the [project](https://github.com/users/rbeauchamp/projects/4)
+   owns live ordering and status. [`roadmap.md`](roadmap.md) links the workstreams.
 2. [`operating-model.md`](operating-model.md) owns the normative development,
    review, qualification, and release process.
 3. A file under [`profiles/`](profiles/) owns the exact supported envelope for a
    release.
 4. [`manifests/`](manifests/) contains machine-checked toolchain and consumer
    identities, harness sets, result expectations, and diagnostic ledgers.
-5. [`scripts/`](scripts/) implements fail-closed gates for those manifests.
+5. [`scripts/`](scripts/) and [`kani-qualify`](../tools/kani-qualify/) implement
+   evidence gates. [`infrastructure.md`](infrastructure.md) defines the Rust
+   tool's admission contract and its limits.
 6. A file under [`releases/`](releases/) owns immutable candidate identity,
    evidence, exceptions, and the terminal release verdict.
 7. [`evidence/`](evidence/) contains dated, exact-candidate execution records;
