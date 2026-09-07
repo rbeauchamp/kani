@@ -1,15 +1,20 @@
 # Copyright Kani Contributors
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 
-name: Qualified core-v1 replay
+name: Qualification infrastructure
 
 on:
+  pull_request:
+  merge_group:
   push:
     branches:
-      - qualification/bootstrap
+      - main
     paths:
       - .github/workflows/qualification-core-v1.yml
+      - Cargo.toml
+      - Cargo.lock
       - qualification/**
+      - tools/kani-qualify/**
   workflow_dispatch:
 
 permissions:
@@ -17,11 +22,11 @@ permissions:
 
 concurrency:
   group: qualification-core-v1-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   policy-tests:
-    name: Gate policy tests
+    name: Qualification tests
     runs-on: ubuntu-22.04
     steps:
       - name: Check out the qualification program
@@ -29,7 +34,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Test the fail-closed gate
+      - name: Setup Kani Dependencies
+        uses: ./.github/actions/setup
+        with:
+          os: ubuntu-22.04
+
+      - name: Test kani-qualify tool
+        run: cargo test -p kani-qualify
+
+      - name: Test gate policy
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest discover -s qualification/scripts -p 'test_*.py' -v
+
+      - name: Build Kani
+        run: cargo build-dev
+
+      - name: Prove result-count admission against mathematical counts
+        run: ./scripts/kani qualification/proofs/result_counts.rs
+
+      - name: Exercise mutation infrastructure against this build
+        run: |
+          cargo run -p kani-qualify -- mutation-self-test \
+            --fixtures qualification/fixtures/mutations \
+            --kani-bin target/kani/bin/kani-driver
