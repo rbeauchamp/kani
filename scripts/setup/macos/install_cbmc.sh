@@ -12,7 +12,8 @@ if [ -z "${CBMC_VERSION:-}" ]; then
   exit 1
 fi
 
-# Install CBMC for macOS from CBMC tap
+# Install the fully qualified formula so Homebrew taps and trusts only this item.
+# A separate `brew tap` can evaluate other untrusted formulae on CI runners.
+# https://docs.brew.sh/Tap-Trust
 # https://github.com/diffblue/cbmc/blob/develop/doc/ADR/homebrew_tap.md
-brew tap diffblue/cbmc
-brew install --overwrite diffblue/cbmc/cbmc@${CBMC_VERSION}
+brew install --overwrite "diffblue/cbmc/cbmc@${CBMC_VERSION}"
