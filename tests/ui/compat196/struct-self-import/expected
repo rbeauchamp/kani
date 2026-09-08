@@ -1,0 +1,6 @@
+error[E0432]: unresolved import `S`\
+struct-self-import.rs:9:5
+
+|\
+| use S::{self as Other};\
+|     ^ `S` is a struct, not a module
