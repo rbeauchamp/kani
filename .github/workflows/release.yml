@@ -22,29 +22,6 @@ env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
-  build_bundle_macos_x86_64:
-    name: BuildBundle-MacOs-x86_64
-    runs-on: macos-15-intel
-    outputs:
-      version: ${{ steps.bundle.outputs.version }}
-      bundle: ${{ steps.bundle.outputs.bundle }}
-      package: ${{ steps.bundle.outputs.package }}
-      crate_version: ${{ steps.bundle.outputs.crate_version }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Kani Dependencies
-        uses: ./.github/actions/setup
-        with:
-          os: macos-15-intel
-
-      - name: Build bundle
-        id: bundle
-        uses: ./.github/actions/build-bundle
-        with:
-          platform: x86_64-apple-darwin
-
   build_bundle_macos_aarch64:
     name: BuildBundle-MacOs-aarch64
     runs-on: macos-14
@@ -116,14 +93,11 @@ jobs:
 
   test-use-local-toolchain:
     name: TestLocalToolchain
-    needs: [build_bundle_macos_x86_64, build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64]
+    needs: [build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64]
     strategy:
       matrix:
-        os: [macos-15-intel, macos-14, ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+        os: [macos-14, ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
         include:
-        - os: macos-15-intel
-          rust_target: x86_64-apple-darwin
-          prev_job: ${{ needs.build_bundle_macos_x86_64.outputs }}
         - os: macos-14
           rust_target: aarch64-apple-darwin
           prev_job: ${{ needs.build_bundle_macos_aarch64.outputs }}
@@ -222,15 +196,13 @@ jobs:
 
   test_bundle:
     name: TestBundle
-    needs: [build_bundle_macos_x86_64, build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64]
+    needs: [build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64]
     strategy:
       matrix:
-        os: [macos-15-intel, macos-14, ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
+        os: [macos-14, ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm]
         include:
           # Stores the output of the previous job conditional to the OS
           - prev_job: ${{ needs.build_bundle_linux_x86_64.outputs }}
-          - os: macos-15-intel
-            prev_job: ${{ needs.build_bundle_macos_x86_64.outputs }}
           - os: macos-14
             prev_job: ${{ needs.build_bundle_macos_aarch64.outputs }}
           - os: ubuntu-24.04-arm
@@ -276,7 +248,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-    needs: [build_bundle_macos_x86_64, build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64, test_bundle]
+    needs: [build_bundle_macos_aarch64, build_bundle_linux_x86_64, build_bundle_linux_aarch64, test_bundle]
     outputs:
       version: ${{ steps.versioning.outputs.version }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
@@ -301,11 +273,6 @@ jobs:
           fi
           echo "version=${{ env.TAG_VERSION }}" >> $GITHUB_OUTPUT
 
-      - name: Download MacOS bundle
-        uses: actions/download-artifact@v8
-        with:
-          name: ${{ needs.build_bundle_macos_x86_64.outputs.bundle }}
-
       - name: Download MacOS ARM bundle
         uses: actions/download-artifact@v8
         with:
@@ -329,7 +296,7 @@ jobs:
         with:
           name: kani-${{ env.TAG_VERSION }}
           tag: kani-${{ env.TAG_VERSION }}
-          artifacts: "${{ needs.build_bundle_linux_x86_64.outputs.bundle }},${{ needs.build_bundle_linux_aarch64.outputs.bundle }},${{ needs.build_bundle_macos_x86_64.outputs.bundle }},${{ needs.build_bundle_macos_aarch64.outputs.bundle }}"
+          artifacts: "${{ needs.build_bundle_linux_x86_64.outputs.bundle }},${{ needs.build_bundle_linux_aarch64.outputs.bundle }},${{ needs.build_bundle_macos_aarch64.outputs.bundle }}"
           body: |
             Kani Rust verifier release bundle version ${{ env.TAG_VERSION }}.
           draft: true

@@ -7,10 +7,11 @@ on:
   pull_request:
   merge_group:
   push:
+    # Only push to main: feature-branch pushes duplicate pull_request runs.
     # Not just any push, as that includes tags.
     # We don't want to re-trigger this workflow when tagging an existing commit.
     branches:
-      - '**'
+      - 'main'
 
 jobs:
   format-check:

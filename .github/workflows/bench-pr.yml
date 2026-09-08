@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 #
 # Run the performance benchmark workflows for pull requests that carry the
-# corresponding Z-*BenchCI label (applied automatically by the labeler in
-# extra_jobs.yml based on the changed files, or manually).
+# corresponding Z-*BenchCI label. The labels are applied manually only (issue
+# #5 removed the file-based auto-labeler); they persist in the repository.
 #
 # This runs on `pull_request` (not `pull_request_target`) on purpose: the
 # benchmark workflows build and execute the code proposed in the pull
@@ -11,11 +11,9 @@
 # context (actions/checkout v6.1.0/v5.1.0/v4.4.0 refuse to do so; see
 # https://github.blog/changelog/2026-06-18-safer-pull_request_target-defaults-for-github-actions-checkout/).
 #
-# Note on the `labeled` trigger: labels added by the auto-labeler do not
-# re-trigger this workflow (events created with the default GITHUB_TOKEN
-# never trigger new workflow runs), so on freshly opened pull requests the
-# benchmarks only start with the next push to the pull request. Manually
-# adding the label triggers them immediately.
+# Note on the `labeled` trigger: manually adding the label triggers the
+# benchmarks immediately; subsequent pushes to the pull request re-evaluate
+# the label gate.
 
 name: Kani Benchmarks
 permissions:

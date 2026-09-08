@@ -11,9 +11,10 @@ on:
   pull_request:
   merge_group:
   push:
+    # Only push to main: feature-branch pushes duplicate pull_request runs.
     # Run on changes to branches but not tags.
     branches:
-      - '**'
+      - 'main'
 
 jobs:
   audit:
