@@ -153,8 +153,7 @@ impl MutableBody {
         let span = source.span(&self.blocks);
         let ret_ty = rvalue.ty(&self.locals).unwrap();
         let result = self.new_local(ret_ty, span, Mutability::Not);
-        let stmt =
-            Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span };
+        let stmt = Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span };
         self.insert_stmt(stmt, source, position);
         result
     }

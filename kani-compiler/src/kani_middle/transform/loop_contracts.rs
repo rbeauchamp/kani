@@ -276,8 +276,7 @@ impl LoopContractPass {
             );
             let span = body.blocks()[first_blockid].statements.first().unwrap().span;
             // Add the StorageLive(nthpat) statement at the begining of the same block
-            let storagelive_stmt =
-                Statement { kind: StatementKind::StorageLive(nthvar), span };
+            let storagelive_stmt = Statement { kind: StatementKind::StorageLive(nthvar), span };
             body.insert_stmt(
                 storagelive_stmt,
                 &mut SourceInstruction::Statement { idx: 0, bb: first_blockid },
