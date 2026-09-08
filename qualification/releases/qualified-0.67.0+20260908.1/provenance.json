@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "distribution": {
+    "name": "Kani core-v2 controlled-use distribution",
+    "official_upstream_release": false,
+    "release_kind": "github-prerelease",
+    "tag": "qualified-0.67.0+20260908.1",
+    "version": "0.67.0+qualified.20260908.1"
+  },
+  "source": {
+    "repository": "https://github.com/rbeauchamp/kani",
+    "commit": "734fcd7fcf4b1f8b3e37434d911209e6300da643",
+    "tree": "ee0a58fd8be2e9e13057d7dbe4de588893d949d3"
+  },
+  "build": {
+    "workflow": "Release Bundle",
+    "run_id": 34259418299,
+    "run_url": "https://github.com/rbeauchamp/kani/actions/runs/34259418299",
+    "head_sha": "734fcd7fcf4b1f8b3e37434d911209e6300da643",
+    "conclusion": "success"
+  },
+  "artifacts": [
+    {
+      "kind": "kani-bundle",
+      "platform": "aarch64-apple-darwin",
+      "upstream_name": "kani-latest-aarch64-apple-darwin.tar.gz",
+      "release_name": "kani-0.67.0+qualified.20260908.1-aarch64-apple-darwin.tar.gz",
+      "size": 109764848,
+      "sha256": "0dbd12a6f894fb9a55aa68a9749c4dc4f9da3e3f3d0cbfe7dde69ef2a341c1a6"
+    },
+    {
+      "kind": "kani-bundle",
+      "platform": "x86_64-unknown-linux-gnu",
+      "upstream_name": "kani-latest-x86_64-unknown-linux-gnu.tar.gz",
+      "release_name": "kani-0.67.0+qualified.20260908.1-x86_64-unknown-linux-gnu.tar.gz",
+      "size": 142938106,
+      "sha256": "f5be1cbe3d3887e4bea9e8d5a2c856e9ae04a4e5d4425ee1cdef957a9960966a"
+    },
+    {
+      "kind": "kani-verifier-installer-source",
+      "platform": "platform-independent-source",
+      "upstream_name": "aarch64-apple-darwin-kani-verifier.crate",
+      "release_name": "kani-verifier-0.67.0-734fcd7.crate",
+      "size": 29896,
+      "sha256": "ac1230b2e0b34e55ecb9e8640e76ead5d63b1d0a3fccb74cbcddf087e9169022"
+    },
+    {
+      "kind": "kani-bundle",
+      "platform": "aarch64-unknown-linux-gnu",
+      "label": "not-qualified",
+      "upstream_name": "kani-latest-aarch64-unknown-linux-gnu.tar.gz",
+      "release_name": "kani-0.67.0+20260908.1-aarch64-unknown-linux-gnu-not-qualified.tar.gz",
+      "size": 141083949,
+      "sha256": "2c232b74145c81075ca38746a8a35c3205ca717509270b8ca7207b31f2ee6425"
+    },
+    {
+      "kind": "sbom",
+      "platform": "platform-independent-source",
+      "upstream_name": null,
+      "release_name": "kani-verifier-0.67.0-734fcd7.sbom.json",
+      "size": 30664,
+      "sha256": "e1261b6ea5f98573f9d7cd14eee28280dad04078d4236be96d06b6eb926b283c"
+    }
+  ],
+  "toolchain": {
+    "cargo_kani": "Kani Rust Verifier 0.67.0 (734fcd7) (cargo plugin)",
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "llvm": "22.1.6",
+    "cbmc": "6.11.0 (cbmc-6.11.0)",
+    "kissat": "4.0.1"
+  },
+  "qualification": {
+    "profile": "core-v2",
+    "profile_path": "qualification/profiles/core-v2.md",
+    "gate_path": "qualification/scripts/core_v1_gate.py",
+    "gate_sha256": "700e14de9492f6549ae0f4b9e8c823392921777812054f2864fe169381cb6a07",
+    "scope_path": "qualification/releases/qualified-0.67.0+20260908.1/release-scope.md"
+  },
+  "redistribution": {
+    "content_changed": false,
+    "filenames_changed": true,
+    "statement": "Built artifacts were renamed for this release without changing their bytes."
+  },
+  "limitations": [
+    "This is an unofficial downstream distribution and is not endorsed by the upstream Kani team.",
+    "Qualification is limited to the declared core-v2 profile and the two named platforms aarch64-apple-darwin and x86_64-unknown-linux-gnu.",
+    "The aarch64-unknown-linux-gnu bundle is published with an explicit not-qualified label: no public profile gate has run on that platform.",
+    "The SPDX SBOM covers the installer crate's locked Rust dependency graph (cargo-sbom 0.10.0); CBMC, kissat, charon, and the Rust toolchain are recorded here in provenance, not in the SBOM.",
+    "No SLSA attestation is asserted by this provenance record.",
+    "Application-specific manifests and receipts are not public distribution artifacts."
+  ]
+}
