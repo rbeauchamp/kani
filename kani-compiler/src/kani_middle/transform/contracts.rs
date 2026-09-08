@@ -5,9 +5,7 @@ use crate::args::ReachabilityType;
 use crate::kani_middle::attributes::KaniAttributes;
 use crate::kani_middle::codegen_units::CodegenUnit;
 use crate::kani_middle::kani_functions::{KaniIntrinsic, KaniModel};
-use crate::kani_middle::transform::body::{
-    InsertPosition, MutableBody, SourceInstruction, synthetic_source_info,
-};
+use crate::kani_middle::transform::body::{InsertPosition, MutableBody, SourceInstruction};
 use crate::kani_middle::transform::{TransformPass, TransformationType};
 use crate::kani_queries::QueryDb;
 use cbmc::{InternString, InternedString};
@@ -122,7 +120,7 @@ impl AnyModifiesPass {
             {
                 let instance = Instance::resolve(self.kani_any.unwrap(), &instance_args).unwrap();
                 let literal = MirConst::try_new_zero_sized(instance.ty()).unwrap();
-                let span = bb.terminator.source_info.span;
+                let span = bb.terminator.span;
                 let new_func = ConstOperand { span, user_ty: None, const_: literal };
                 *func = Operand::Constant(new_func);
                 changed = true;
@@ -148,7 +146,7 @@ impl AnyModifiesPass {
                     let instance =
                         Instance::resolve(self.kani_write_any_slice.unwrap(), &elem_args).unwrap();
                     let literal = MirConst::try_new_zero_sized(instance.ty()).unwrap();
-                    let span = bb.terminator.source_info.span;
+                    let span = bb.terminator.span;
                     let new_func = ConstOperand { span, user_ty: None, const_: literal };
                     *func = Operand::Constant(new_func);
                 } else if let TyKind::RigidTy(RigidTy::Str) = internal_type.kind() {
@@ -157,7 +155,7 @@ impl AnyModifiesPass {
                         Instance::resolve(self.kani_write_any_str.unwrap(), &instance_args)
                             .unwrap();
                     let literal = MirConst::try_new_zero_sized(instance.ty()).unwrap();
-                    let span = bb.terminator.source_info.span;
+                    let span = bb.terminator.span;
                     let new_func = ConstOperand { span, user_ty: None, const_: literal };
                     *func = Operand::Constant(new_func);
                 } else {
@@ -166,7 +164,7 @@ impl AnyModifiesPass {
                         Instance::resolve(self.kani_write_any_slim.unwrap(), &instance_args)
                             .unwrap();
                     let literal = MirConst::try_new_zero_sized(instance.ty()).unwrap();
-                    let span = bb.terminator.source_info.span;
+                    let span = bb.terminator.span;
                     let new_func = ConstOperand { span, user_ty: None, const_: literal };
                     *func = Operand::Constant(new_func);
                 }
@@ -203,10 +201,7 @@ impl AnyModifiesPass {
                             format!("`{receiver_ty}` doesn't implement `kani::Arbitrary`.")
                         };
                         tcx.dcx()
-                            .struct_span_err(
-                                rustc_internal::internal(tcx, bb.terminator.source_info.span),
-                                msg,
-                            )
+                            .struct_span_err(rustc_internal::internal(tcx, bb.terminator.span), msg)
                             .with_help(
                                 "All objects in the modifies clause must implement the Arbitrary. \
                                  The return type must also implement the Arbitrary trait if you \
@@ -553,10 +548,7 @@ impl FunctionWithContractPass {
         }
         new_body.replace_terminator(
             &mode_call,
-            Terminator {
-                kind: TerminatorKind::Goto { target },
-                source_info: synthetic_source_info(span),
-            },
+            Terminator { kind: TerminatorKind::Goto { target }, span: span },
         );
 
         new_body.into()
@@ -835,7 +827,7 @@ fn check_mutual_recursion(tcx: TyCtxt, fn_def: FnDef, body: &Body) {
             if transitive_def.def_id() == fn_def.def_id() {
                 let callee_name =
                     tcx.def_path_str(rustc_internal::internal(tcx, callee_def.def_id()));
-                let span = rustc_internal::internal(tcx, bb.terminator.source_info.span);
+                let span = rustc_internal::internal(tcx, bb.terminator.span);
                 tcx.dcx().span_err(
                     span,
                     format!(

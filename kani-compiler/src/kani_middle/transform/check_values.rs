@@ -208,7 +208,7 @@ impl ValidValueReq {
             let shape = ty.layout().unwrap().shape();
             match shape.abi {
                 ValueAbi::Scalar(Scalar::Initialized { value, valid_range })
-                | ValueAbi::ScalarPair { a: Scalar::Initialized { value, valid_range }, .. } => {
+                | ValueAbi::ScalarPair(Scalar::Initialized { value, valid_range }, _) => {
                     Some(ValidValueReq {
                         offset: 0,
                         size: value.size(machine_info),
@@ -216,7 +216,7 @@ impl ValidValueReq {
                     })
                 }
                 ValueAbi::Scalar(_)
-                | ValueAbi::ScalarPair { .. }
+                | ValueAbi::ScalarPair(..)
                 | ValueAbi::Vector { .. }
                 | ValueAbi::ScalableVector { .. }
                 | ValueAbi::Aggregate { .. } => None,
@@ -629,7 +629,7 @@ impl MirVisitor for CheckValueVisitor<'_, '_> {
                         })
                     }
                 }
-                CastKind::Transmute | CastKind::BoxDerefTransmute | CastKind::Subtype => {
+                CastKind::Transmute | CastKind::Subtype => {
                     debug!(?dest_ty, "transmute");
                     // For transmute, we care about the destination type only.
                     // This could be optimized to only add a check if the requirements of the
