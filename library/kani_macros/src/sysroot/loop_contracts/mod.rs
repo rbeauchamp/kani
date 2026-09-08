@@ -566,24 +566,27 @@ pub fn loop_invariant(attr: TokenStream, item: TokenStream) -> TokenStream {
                 el.body.stmts = new_stmts.clone();
             }
             _ => {
-                return Diagnostic::spanned(
-                    proc_macro2::Span::call_site(),
-                    Level::Error,
-                    "`#[kani::loop_invariant]` is now only supported for while-loops.".to_string(),
+                return crate::emit_diagnostic(
+                    Diagnostic::spanned(
+                        proc_macro2::Span::call_site(),
+                        Level::Error,
+                        "`#[kani::loop_invariant]` is now only supported for while-loops."
+                            .to_string(),
+                    )
+                    .note("for now, loop contracts is only supported for while-loops.".to_string()),
                 )
-                .note("for now, loop contracts is only supported for while-loops.".to_string())
-                .emit_as_item_tokens()
                 .into();
             }
         },
         _ => {
-            return Diagnostic::spanned(
-                proc_macro2::Span::call_site(),
-                Level::Error,
-                "`#[kani::loop_invariant]` is now only supported for while-loops.".to_string(),
+            return crate::emit_diagnostic(
+                Diagnostic::spanned(
+                    proc_macro2::Span::call_site(),
+                    Level::Error,
+                    "`#[kani::loop_invariant]` is now only supported for while-loops.".to_string(),
+                )
+                .note("for now, loop contracts is only supported for while-loops.".to_string()),
             )
-            .note("for now, loop contracts is only supported for while-loops.".to_string())
-            .emit_as_item_tokens()
             .into();
         }
     }

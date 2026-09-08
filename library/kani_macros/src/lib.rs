@@ -22,6 +22,46 @@ use sysroot as attr_impl;
 #[cfg(not(kani_sysroot))]
 use regular as attr_impl;
 
+/// Emit `diagnostic` as item tokens.
+///
+/// On nightly, `proc-macro2-diagnostics` emits a rich compiler diagnostic. On stable it falls
+/// back to `syn::Error::to_compile_error`, which produces `::core::compile_error!`; that path
+/// does not resolve under edition 2015, still the default for standalone `kani` invocations.
+/// So on stable we emit unqualified `compile_error!` calls instead, which resolve through the
+/// macro prelude in every edition. The rendered messages (including helps and notes) are
+/// identical; only the presentation is less structured.
+#[cfg(kani_nightly_diagnostics)]
+pub(crate) fn emit_diagnostic(
+    diagnostic: proc_macro2_diagnostics::Diagnostic,
+) -> proc_macro2::TokenStream {
+    diagnostic.emit_as_item_tokens()
+}
+
+/// See the nightly variant above.
+///
+/// `syn::Error::from(diagnostic)` flattens the diagnostic: unspanned children are joined into
+/// the message as rustc-style `= note: ...` lines, while each spanned child becomes its own
+/// error whose message is prefixed `[note] ` / `[help] ` / `[warning] `. We rewrite those
+/// prefixes to rustc's `note: ` convention so the rendered output carries the same lines a
+/// rich diagnostic would.
+#[cfg(not(kani_nightly_diagnostics))]
+pub(crate) fn emit_diagnostic(
+    diagnostic: proc_macro2_diagnostics::Diagnostic,
+) -> proc_macro2::TokenStream {
+    let error = syn::Error::from(diagnostic);
+    let compile_errors = error.into_iter().map(|e| {
+        let message = e.to_string();
+        let message = match message.split_once(' ') {
+            Some(("[note]", rest)) => format!("note: {rest}"),
+            Some(("[help]", rest)) => format!("help: {rest}"),
+            Some(("[warning]", rest)) => format!("warning: {rest}"),
+            _ => message,
+        };
+        quote::quote_spanned!(e.span() => compile_error!(#message);)
+    });
+    quote::quote!(#(#compile_errors)*)
+}
+
 /// Marks a Kani proof harness
 ///
 /// For async harnesses, this will call [`block_on`](https://model-checking.github.io/kani/crates/doc/kani/futures/fn.block_on.html) to drive the future to completion (see its documentation for more information).
@@ -561,7 +601,7 @@ mod sysroot {
         let fn_item = parse_macro_input!(item as ItemFn);
         match proof_impl(attr, fn_item) {
             Ok(tokens) => tokens,
-            Err(diagnostic) => diagnostic.emit_as_item_tokens().into(),
+            Err(diagnostic) => crate::emit_diagnostic(diagnostic).into(),
         }
     }
 

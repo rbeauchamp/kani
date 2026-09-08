@@ -19,6 +19,9 @@ syn = { version = "2.0.18", features = ["full", "visit-mut", "visit", "extra-tra
 strum = "0.28"
 strum_macros = "0.28"
 
+[build-dependencies]
+version_check = "0.9"
+
 [package.metadata.rust-analyzer]
 # This package uses rustc crates.
 rustc_private = true

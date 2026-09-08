@@ -1197,6 +1197,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "syn 2.0.119",
+ "version_check",
 ]
 
 [[package]]
