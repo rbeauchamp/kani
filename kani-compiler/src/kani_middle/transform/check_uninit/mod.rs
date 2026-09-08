@@ -6,7 +6,7 @@
 
 use crate::kani_middle::nonnull_pointee;
 use crate::kani_middle::transform::body::{
-    CheckType, InsertPosition, MutableBody, SourceInstruction,
+    CheckType, InsertPosition, MutableBody, SourceInstruction, synthetic_source_info,
 };
 use relevant_instruction::{InitRelevantInstruction, MemoryInitOp};
 use rustc_public::{
@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use crate::kani_middle::kani_functions::{KaniFunction, KaniModel};
 pub use delayed_ub::DelayedUbPass;
 pub use ptr_uninit::UninitPass;
+use rustc_public::mir::WithRetag;
 pub use ty_layout::{PointeeInfo, PointeeLayout};
 
 mod delayed_ub;
@@ -270,7 +271,7 @@ impl<'a> UninitInstrumenter<'a> {
                         target: Some(0), // The current value does not matter, since it will be overwritten in add_bb.
                         unwind: UnwindAction::Terminate,
                     },
-                    span: source.span(body.blocks()),
+                    source_info: synthetic_source_info(source.span(body.blocks())),
                 }
             }
             PointeeLayout::Slice { element_layout } => {
@@ -303,7 +304,7 @@ impl<'a> UninitInstrumenter<'a> {
                         target: Some(0), // The current value does not matter, since it will be overwritten in add_bb.
                         unwind: UnwindAction::Terminate,
                     },
-                    span: source.span(body.blocks()),
+                    source_info: synthetic_source_info(source.span(body.blocks())),
                 }
             }
             PointeeLayout::TraitObject => {
@@ -414,7 +415,7 @@ impl<'a> UninitInstrumenter<'a> {
                         target: Some(0), // this will be overriden in add_bb
                         unwind: UnwindAction::Terminate,
                     },
-                    span: source.span(body.blocks()),
+                    source_info: synthetic_source_info(source.span(body.blocks())),
                 }
             }
             PointeeLayout::Slice { element_layout } => {
@@ -455,7 +456,7 @@ impl<'a> UninitInstrumenter<'a> {
                         target: Some(0), // The current value does not matter, since it will be overwritten in add_bb.
                         unwind: UnwindAction::Terminate,
                     },
-                    span: source.span(body.blocks()),
+                    source_info: synthetic_source_info(source.span(body.blocks())),
                 }
             }
             PointeeLayout::TraitObject => {
@@ -509,7 +510,7 @@ impl<'a> UninitInstrumenter<'a> {
                         target: Some(0), // this will be overriden in add_bb
                         unwind: UnwindAction::Terminate,
                     },
-                    span: source.span(body.blocks()),
+                    source_info: synthetic_source_info(source.span(body.blocks())),
                 }
             }
         };
@@ -595,7 +596,7 @@ impl<'a> UninitInstrumenter<'a> {
                 target: Some(0), // this will be overriden in add_bb
                 unwind: UnwindAction::Terminate,
             },
-            span: source.span(body.blocks()),
+            source_info: synthetic_source_info(source.span(body.blocks())),
         };
 
         // Construct the basic block and insert it into the body.
@@ -634,7 +635,7 @@ impl<'a> UninitInstrumenter<'a> {
                 target: Some(0), // this will be overriden in add_bb
                 unwind: UnwindAction::Terminate,
             },
-            span: source.span(body.blocks()),
+            source_info: synthetic_source_info(source.span(body.blocks())),
         };
 
         // Construct the basic block and insert it into the body.
@@ -649,11 +650,14 @@ impl<'a> UninitInstrumenter<'a> {
         reason: &str,
     ) {
         let span = source.span(body.blocks());
-        let rvalue = Rvalue::Use(Operand::Constant(ConstOperand {
-            const_: MirConst::from_bool(false),
-            span,
-            user_ty: None,
-        }));
+        let rvalue = Rvalue::Use(
+            Operand::Constant(ConstOperand {
+                const_: MirConst::from_bool(false),
+                span,
+                user_ty: None,
+            }),
+            WithRetag::No,
+        );
         let result = body.insert_assignment(rvalue, source, position);
         body.insert_check(&self.safety_check_type, source, position, Some(result), reason);
     }
@@ -703,7 +707,10 @@ pub fn mk_layout_operand(
     );
     let ret_ty = rvalue.ty(body.locals()).unwrap();
     let result = body.new_local(ret_ty, span, Mutability::Not);
-    let stmt = Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span };
+    let stmt = Statement {
+        kind: StatementKind::Assign(Place::from(result), rvalue),
+        source_info: synthetic_source_info(span),
+    };
     statements.push(stmt);
 
     Operand::Move(Place { local: result, projection: vec![] })
