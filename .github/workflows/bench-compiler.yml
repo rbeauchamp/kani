@@ -6,9 +6,13 @@ name: Kani Compiler Performance Benchmarks
 permissions:
   contents: read
 on:
-  push:
-    branches:
-      - 'main'
+  # Scheduled trend coverage and explicit selection only (issue #5); heavy
+  # benchmarks no longer run automatically on every push to main or via
+  # auto-applied PR labels. Opt in per-PR by applying the Z-CompilerBenchCI
+  # label manually (bench-pr.yml), or dispatch this workflow directly.
+  schedule:
+    - cron: "17 6 * * *" # Daily at 06:17 UTC
+  workflow_dispatch:
   workflow_call:
 
 jobs:
@@ -28,6 +32,13 @@ jobs:
         run: |
           echo "OLD_REF=${{ github.event.pull_request.base.sha }}" | tee -a "$GITHUB_ENV"
           echo "NEW_REF=${{ github.event.pull_request.head.sha }}" | tee -a "$GITHUB_ENV"
+      - name: Save scheduled/dispatch HEAD and its first parent to environment variables
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          echo "NEW_REF=${{ github.sha }}" | tee -a "$GITHUB_ENV"
+          git init -q refs-probe
+          git -C refs-probe fetch -q --depth=2 https://github.com/${{ github.repository }}.git "${{ github.sha }}"
+          echo "OLD_REF=$(git -C refs-probe rev-parse FETCH_HEAD^1)" | tee -a "$GITHUB_ENV"
       - name: Check out Kani (old variant)
         uses: actions/checkout@v6
         with:
@@ -94,6 +105,13 @@ jobs:
         run: |
           echo "OLD_REF=${{ github.event.pull_request.base.sha }}" | tee -a "$GITHUB_ENV"
           echo "NEW_REF=${{ github.event.pull_request.head.sha }}" | tee -a "$GITHUB_ENV"
+      - name: Save scheduled/dispatch HEAD and its first parent to environment variables
+        if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          echo "NEW_REF=${{ github.sha }}" | tee -a "$GITHUB_ENV"
+          git init -q refs-probe
+          git -C refs-probe fetch -q --depth=2 https://github.com/${{ github.repository }}.git "${{ github.sha }}"
+          echo "OLD_REF=$(git -C refs-probe rev-parse FETCH_HEAD^1)" | tee -a "$GITHUB_ENV"
       
       - name: Check out Kani (old variant)
         uses: actions/checkout@v6
