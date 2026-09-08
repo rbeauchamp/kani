@@ -1,0 +1,6 @@
+error: `export_name` may not be empty\
+empty-export-name.rs:6:1
+
+|\
+| #[export_name = ""]\
+| ^^^^^^^^^^^^^^^^^^^

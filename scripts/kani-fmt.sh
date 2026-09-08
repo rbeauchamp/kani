@@ -36,7 +36,11 @@ TESTS=("tests" "docs/src/tutorial")
 # files staged for `cp -r` by `scripts/kani-perf.sh`, and they can reference
 # `mod` declarations whose siblings only exist in the submodule, so rustfmt
 # cannot standalone-parse them.
-IGNORE=("*/perf/s2n-quic/*" "*/perf/overlays/*")
+# `*/ui/compat197/tuple-index-pattern/*` excludes a compile-fail test whose
+# purpose is that rustc 1.97 *rejects* tuple-index shorthand in struct
+# patterns; the file intentionally does not parse, so rustfmt cannot
+# standalone-parse it either.
+IGNORE=("*/perf/s2n-quic/*" "*/perf/overlays/*" "*/ui/compat197/tuple-index-pattern/*")
 
 # Arguments for the find command for excluding the IGNORE paths
 IGNORE_ARGS=()

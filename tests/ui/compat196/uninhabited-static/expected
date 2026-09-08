@@ -1,0 +1,10 @@
+error: static of uninhabited type\
+uninhabited-static.rs:13:5
+
+|\
+|     static S: Void;\
+|     ^^^^^^^^^^^^^^
+
+= warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+
+= note: `#[deny(uninhabited_static)]` (part of `#[deny(future_incompatible)]`) on by default

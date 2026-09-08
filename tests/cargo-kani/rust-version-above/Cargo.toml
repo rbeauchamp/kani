@@ -1,0 +1,11 @@
+# Copyright Kani Contributors
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+[package]
+name = "rust-version-above"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98.0"
+
+[dependencies]
+
+[workspace]

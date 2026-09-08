@@ -1,0 +1,8 @@
+error[E0109]: type arguments are not allowed on module `m`\
+module-segment-generics.rs:19:18
+
+|\
+|     let _x = m::<u8>::A(1);\
+|              -   ^^ type argument not allowed\
+|              |\
+|              not allowed on module `m`

@@ -1,0 +1,8 @@
+error: expected identifier, found `0`\
+tuple-index-pattern.rs:10:13
+
+|\
+|     let P { 0 } = p;\
+|         -   ^ expected identifier\
+|         |\
+|         while parsing the fields for this pattern
