@@ -813,15 +813,7 @@ impl GotocCtx<'_, '_> {
             Rvalue::Cast(CastKind::PointerCoercion(k), e, t) => {
                 self.codegen_pointer_cast(k, e, *t, loc)
             }
-            // `BoxDerefTransmute` is an elaborated `Box` deref turning the inner pointer into a
-            // raw one. Its docs describe it as a regular transmute that is additionally UB if the
-            // input is not valid as a `Box<T>`, and say backends may treat it as a plain
-            // transmute; Kani checks pointer validity separately at the deref itself.
-            Rvalue::Cast(
-                CastKind::Transmute | CastKind::BoxDerefTransmute | CastKind::Subtype,
-                operand,
-                ty,
-            ) => {
+            Rvalue::Cast(CastKind::Transmute | CastKind::Subtype, operand, ty) => {
                 let src_ty = operand.ty(self.current_fn().locals()).unwrap();
                 // Transmute requires sized types.
                 let src_sz = LayoutOf::new(src_ty).size_of().unwrap();
@@ -1007,7 +999,8 @@ impl GotocCtx<'_, '_> {
                     let niche_val = self.codegen_get_niche(e, offset.bytes() as usize, discr_type);
                     let relative_discr =
                         wrapping_sub(&niche_val, u64::try_from(*niche_start).unwrap());
-                    let relative_max = niche_variants.last.as_u32() - niche_variants.start.as_u32();
+                    let relative_max =
+                        niche_variants.end().as_u32() - niche_variants.start().as_u32();
                     let is_niche = if relative_max == 0 {
                         relative_discr.clone().is_zero()
                     } else {
@@ -1022,7 +1015,7 @@ impl GotocCtx<'_, '_> {
                             relative_discr.cast_to(result_type.clone())
                         };
                         relative_discr.plus(Expr::int_constant(
-                            niche_variants.start.as_u32(),
+                            niche_variants.start().as_u32(),
                             result_type.clone(),
                         ))
                     };

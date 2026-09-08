@@ -45,7 +45,7 @@ pub(crate) fn expand_derive_bounded_arbitrary(
     let parsed = syn::parse_macro_input!(item as syn::DeriveInput);
     match expand_derive_bounded_arbitrary_impl(&parsed) {
         Ok(tokens) => tokens.into(),
-        Err(diagnostic) => diagnostic.emit_as_item_tokens().into(),
+        Err(diagnostic) => crate::emit_diagnostic(diagnostic).into(),
     }
 }
 

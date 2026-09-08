@@ -12,7 +12,7 @@ use crate::kani_middle::abi::LayoutOf;
 use crate::kani_middle::attributes::KaniAttributes;
 use crate::kani_middle::kani_functions::{KaniFunction, KaniIntrinsic, KaniModel};
 use crate::kani_middle::transform::body::{
-    CheckType, InsertPosition, MutableBody, SourceInstruction, synthetic_source_info,
+    CheckType, InsertPosition, MutableBody, SourceInstruction,
 };
 use crate::kani_middle::transform::check_uninit::PointeeInfo;
 use crate::kani_middle::transform::check_uninit::{
@@ -22,7 +22,6 @@ use crate::kani_middle::transform::check_values::{build_limits, ty_validity_per_
 use crate::kani_middle::transform::{TransformPass, TransformationType};
 use crate::kani_queries::QueryDb;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::CrateDefType;
 use rustc_public::mir::mono::Instance;
 use rustc_public::mir::{
     AggregateKind, BasicBlock, BinOp, Body, ConstOperand, Local, Mutability, Operand, Place,
@@ -151,7 +150,7 @@ impl IntrinsicGeneratorPass {
                 WithRetag::No,
             ),
         );
-        let stmt = Statement { kind: assign, source_info: synthetic_source_info(span) };
+        let stmt = Statement { kind: assign, span };
         new_body.insert_stmt(stmt, &mut terminator, InsertPosition::Before);
         let machine_info = MachineInfo::target();
 
@@ -175,7 +174,7 @@ impl IntrinsicGeneratorPass {
                         Operand::Move(Place::from(result)),
                     );
                     let assign = StatementKind::Assign(Place::from(ret_var), rvalue);
-                    let stmt = Statement { kind: assign, source_info: synthetic_source_info(span) };
+                    let stmt = Statement { kind: assign, span };
                     new_body.insert_stmt(stmt, &mut terminator, InsertPosition::Before);
                 }
             }
@@ -226,7 +225,7 @@ impl IntrinsicGeneratorPass {
                 ),
             );
             new_body.insert_stmt(
-                Statement { kind: assign, source_info: synthetic_source_info(span) },
+                Statement { kind: assign, span },
                 &mut source,
                 InsertPosition::Before,
             );
@@ -264,10 +263,7 @@ impl IntrinsicGeneratorPass {
                                 ),
                             );
                             new_body.insert_stmt(
-                                Statement {
-                                    kind: assign,
-                                    source_info: synthetic_source_info(span),
-                                },
+                                Statement { kind: assign, span },
                                 &mut source,
                                 InsertPosition::Before,
                             );
@@ -293,7 +289,7 @@ impl IntrinsicGeneratorPass {
                                 target: Some(0), // The current value does not matter, since it will be overwritten in add_bb.
                                 unwind: UnwindAction::Terminate,
                             },
-                            source_info: synthetic_source_info(source.span(new_body.blocks())),
+                            span: source.span(new_body.blocks()),
                         };
                         // Construct the basic block and insert it into the body.
                         new_body.insert_bb(
@@ -336,7 +332,7 @@ impl IntrinsicGeneratorPass {
                                 target: Some(0), // The current value does not matter, since it will be overwritten in add_bb.
                                 unwind: UnwindAction::Terminate,
                             },
-                            source_info: synthetic_source_info(source.span(new_body.blocks())),
+                            span: source.span(new_body.blocks()),
                         };
                         // Construct the basic block and insert it into the body.
                         new_body.insert_bb(

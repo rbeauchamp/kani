@@ -48,7 +48,7 @@ pub fn expand_derive_arbitrary(item: proc_macro::TokenStream) -> proc_macro::Tok
     let derive_item = parse_macro_input!(item as DeriveInput);
     match expand_derive_arbitrary_impl(&derive_item) {
         Ok(tokens) => tokens.into(),
-        Err(diagnostic) => diagnostic.emit_as_item_tokens().into(),
+        Err(diagnostic) => crate::emit_diagnostic(diagnostic).into(),
     }
 }
 
@@ -438,7 +438,7 @@ pub fn expand_derive_invariant(item: proc_macro::TokenStream) -> proc_macro::Tok
     let derive_item = parse_macro_input!(item as DeriveInput);
     match expand_derive_invariant_impl(&derive_item) {
         Ok(tokens) => tokens.into(),
-        Err(diagnostic) => diagnostic.emit_as_item_tokens().into(),
+        Err(diagnostic) => crate::emit_diagnostic(diagnostic).into(),
     }
 }
 

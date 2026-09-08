@@ -35,7 +35,8 @@ use crate::{
 use rustc_middle::{
     mir::{
         BasicBlock, BinOp, Body, CallReturnPlaces, Location, NonDivergingIntrinsic, Operand, Place,
-        ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorKind,
+        ProjectionElem, Rvalue, Statement, StatementKind, Terminator, TerminatorEdges,
+        TerminatorKind,
     },
     ty::{Instance, InstanceKind, List, TyCtxt, TyKind, TypingEnv},
 };
@@ -181,12 +182,12 @@ impl<'tcx> Analysis<'tcx> for PointsToAnalysis<'_, 'tcx> {
         }
     }
 
-    fn apply_primary_terminator_effect(
+    fn apply_primary_terminator_effect<'mir>(
         &self,
         state: &mut Self::Domain,
-        terminator: &Terminator<'tcx>,
+        terminator: &'mir Terminator<'tcx>,
         location: Location,
-    ) {
+    ) -> TerminatorEdges<'mir, 'tcx> {
         if let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind {
             // Attempt to resolve callee. For now, we panic if the callee cannot be resolved (e.g.,
             // if a function pointer call is used), but we could leverage the call graph to resolve
@@ -330,6 +331,7 @@ impl<'tcx> Analysis<'tcx> for PointsToAnalysis<'_, 'tcx> {
                 }
             }
         };
+        terminator.edges()
     }
 
     /// We don't care about this and just need to implement this to implement the trait.
@@ -357,7 +359,7 @@ fn try_resolve_instance<'tcx>(
                 tcx,
                 TypingEnv::fully_monomorphized(),
                 *def,
-                args.skip_binder(),
+                args,
                 DUMMY_SP,
             ))
         }

@@ -126,12 +126,31 @@ jobs:
         run: |
           ls -lh .
 
-      - name: Get toolchain version used to setup kani
+      - name: Resolve the toolchain archive identity
         run: |
           tar zxvf ${{ matrix.prev_job.bundle }}
-          DATE=$(cat ./kani-${{ matrix.prev_job.version }}/rust-toolchain-version | cut -d'-' -f2,3,4)
-          echo "Nightly date: $DATE"
-          echo "DATE=$DATE" >> $GITHUB_ENV
+          CHANNEL=$(cat ./kani-${{ matrix.prev_job.version }}/rust-toolchain-version | tr -d '[:space:]')
+          # The recorded channel is host-qualified (e.g. 1.97.1-aarch64-apple-darwin
+          # or nightly-2026-08-21-x86_64-unknown-linux-gnu); strip the host suffix.
+          CHANNEL="${CHANNEL%-${{ matrix.rust_target }}}"
+          if [[ "$CHANNEL" == nightly-* ]]; then
+            DATE="${CHANNEL#nightly-}"
+            if ! [[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+              echo "::error::Malformed nightly channel recorded in bundle: $CHANNEL"
+              exit 1
+            fi
+            ARCHIVE="rust-nightly-${{ matrix.rust_target }}.tar.gz"
+            URL="https://static.rust-lang.org/dist/${DATE}/${ARCHIVE}"
+          elif [[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            ARCHIVE="rust-${CHANNEL}-${{ matrix.rust_target }}.tar.gz"
+            URL="https://static.rust-lang.org/dist/${ARCHIVE}"
+          else
+            echo "::error::Unsupported toolchain channel recorded in bundle: $CHANNEL"
+            exit 1
+          fi
+          echo "Toolchain channel: $CHANNEL -> $URL"
+          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "TOOLCHAIN_URL=$URL" >> $GITHUB_ENV
 
       - name: Install Kani from path
         run: |
@@ -141,12 +160,30 @@ jobs:
       - name: Create a custom toolchain directory
         run: mkdir -p ${{ github.workspace }}/../custom_toolchain
 
-      - name: Fetch the nightly tarball
+      - name: Fetch and verify the toolchain tarball
         run: |
-          echo "Downloading Rust toolchain from rust server."
-          curl --proto '=https' --tlsv1.2 -O https://static.rust-lang.org/dist/$DATE/rust-nightly-${{ matrix.rust_target }}.tar.gz
-          tar -xzf rust-nightly-${{ matrix.rust_target }}.tar.gz
-          ./rust-nightly-${{ matrix.rust_target }}/install.sh --prefix=${{ github.workspace }}/../custom_toolchain
+          # HTTPS from the official Rust distribution service, pinned TLS, hard
+          # failure on download or checksum mismatch.
+          curl --proto '=https' --tlsv1.2 -fO "$TOOLCHAIN_URL"
+          curl --proto '=https' --tlsv1.2 -fO "$TOOLCHAIN_URL.sha256"
+          # The official .sha256 sidecar already contains "<hash>  <filename>".
+          shasum -a 256 -c "${ARCHIVE}.sha256"
+          tar -xzf "${ARCHIVE}"
+          "./${ARCHIVE%.tar.gz}/install.sh" --prefix=${{ github.workspace }}/../custom_toolchain
+
+      - name: Fail closed on toolchain identity mismatch
+        run: |
+          INSTALLED=$("${{ github.workspace }}/../custom_toolchain/bin/rustc" --version)
+          EXPECTED=$(cat ./kani-${{ matrix.prev_job.version }}/rustc-version)
+          echo "Installed: $INSTALLED"
+          echo "Expected:  $EXPECTED"
+          # Also record the LLVM version for the qualification evidence trail;
+          # the rustc commit in the version string pins the exact LLVM build.
+          "${{ github.workspace }}/../custom_toolchain/bin/rustc" --version --verbose | grep -i 'LLVM version'
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "::error::Downloaded toolchain rustc does not match the bundle's recorded rustc"
+            exit 1
+          fi
 
       - name: Ensure installation is correct
         run: |

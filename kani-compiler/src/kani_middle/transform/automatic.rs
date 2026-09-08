@@ -11,9 +11,7 @@ use crate::kani_middle::attributes::KaniAttributes;
 use crate::kani_middle::codegen_units::CodegenUnit;
 use crate::kani_middle::kani_functions::{KaniFunction, KaniHook, KaniIntrinsic, KaniModel};
 use crate::kani_middle::mined_invariants::{MinedConjunct, MinedExpr, mine_self_assert_conjuncts};
-use crate::kani_middle::transform::body::{
-    InsertPosition, MutableBody, SourceInstruction, synthetic_source_info,
-};
+use crate::kani_middle::transform::body::{InsertPosition, MutableBody, SourceInstruction};
 use crate::kani_middle::transform::{TransformPass, TransformationType};
 use crate::kani_middle::{
     CtorReturn, FmtTrait, SmartPointerModels, adt_has_private_field_check, can_derive_arbitrary,
@@ -23,6 +21,7 @@ use crate::kani_middle::{
 use crate::kani_queries::QueryDb;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::ty::TyCtxt;
+use rustc_public::CrateDef;
 use rustc_public::mir::mono::Instance;
 use rustc_public::mir::{
     AggregateKind, BasicBlock, BasicBlockIdx, BinOp, Body, BorrowKind, CastKind, ConstOperand,
@@ -34,7 +33,6 @@ use rustc_public::ty::{
     AdtDef, AdtKind, FnDef, GenericArgKind, GenericArgs, MirConst, Region, RegionKind, RigidTy, Ty,
     TyConst, TyKind, UintTy, VariantDef, VariantIdx,
 };
-use rustc_public::{CrateDef, CrateDefType};
 use rustc_public_bridge::IndexedVal;
 use tracing::debug;
 
@@ -482,7 +480,7 @@ fn inline_with_assumed_panics(
                         };
                         bb.statements.push(Statement {
                             kind: StatementKind::Assign(Place::from(cond_lcl), rv),
-                            source_info: synthetic_source_info(self.span),
+                            span: self.span,
                         });
                         bb.terminator.kind = self
                             .assume_call_terminator(Operand::Move(Place::from(cond_lcl)), target);
@@ -513,7 +511,7 @@ fn inline_with_assumed_panics(
                                     statements: vec![],
                                     terminator: Terminator {
                                         kind: TerminatorKind::Unreachable,
-                                        source_info: synthetic_source_info(self.span),
+                                        span: self.span,
                                     },
                                 },
                             );
@@ -544,7 +542,7 @@ fn inline_with_assumed_panics(
                                         Place::from(a),
                                         Rvalue::Use(arg_op.clone(), WithRetag::No),
                                     ),
-                                    source_info: synthetic_source_info(self.span),
+                                    span: self.span,
                                 });
                                 inner_map.push(a);
                             }
@@ -568,11 +566,11 @@ fn inline_with_assumed_panics(
                                                 WithRetag::No,
                                             ),
                                         ),
-                                        source_info: synthetic_source_info(self.span),
+                                        span: self.span,
                                     }],
                                     terminator: Terminator {
                                         kind: TerminatorKind::Goto { target },
-                                        source_info: synthetic_source_info(self.span),
+                                        span: self.span,
                                     },
                                 },
                             );
@@ -595,7 +593,7 @@ fn inline_with_assumed_panics(
                                                 statements: vec![],
                                                 terminator: Terminator {
                                                     kind: TerminatorKind::Unreachable,
-                                                    source_info: synthetic_source_info(self.span),
+                                                    span: self.span,
                                                 },
                                             },
                                         );
@@ -631,10 +629,7 @@ fn inline_with_assumed_panics(
     let planned = ctx.planned;
 
     // Commit: split the caller and append all planned blocks at their precomputed indices.
-    let placeholder = Terminator {
-        kind: TerminatorKind::Goto { target: outer_base },
-        source_info: synthetic_source_info(span),
-    };
+    let placeholder = Terminator { kind: TerminatorKind::Goto { target: outer_base }, span };
     let (_goto_bb, actual_continuation) = body.split_with_terminator(source, placeholder);
     assert_eq!(actual_continuation, continuation);
     for bb in planned {
@@ -1511,10 +1506,7 @@ impl AutomaticArbitraryPass {
         body.insert_terminator(
             source,
             InsertPosition::Before,
-            Terminator {
-                kind: TerminatorKind::Return,
-                source_info: synthetic_source_info(source.span(body.blocks())),
-            },
+            Terminator { kind: TerminatorKind::Return, span: source.span(body.blocks()) },
         );
         let mut assign_instr = SourceInstruction::Terminator { bb: source.bb() - 1 };
         let rvalue = Rvalue::Aggregate(
@@ -1587,7 +1579,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Return, source_info: synthetic_source_info(span) },
+            Terminator { kind: TerminatorKind::Return, span },
         );
         Some(new_body.into())
     }
@@ -1652,10 +1644,7 @@ impl AutomaticArbitraryPass {
             new_body.insert_terminator(
                 &mut source,
                 InsertPosition::Before,
-                Terminator {
-                    kind: TerminatorKind::Return,
-                    source_info: synthetic_source_info(ret_span),
-                },
+                Terminator { kind: TerminatorKind::Return, span: ret_span },
             );
             return new_body.into();
         }
@@ -1701,10 +1690,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator {
-                kind: TerminatorKind::Unreachable,
-                source_info: synthetic_source_info(span),
-            },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         let switch_instr = SourceInstruction::Terminator { bb: source.bb() - 1 };
 
@@ -1726,10 +1712,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator {
-                kind: TerminatorKind::Unreachable,
-                source_info: synthetic_source_info(span),
-            },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         // insert_call + terminator added two blocks; the failure branch starts at the first.
         let bad_bb = source.bb() - 2;
@@ -1745,7 +1728,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Return, source_info: synthetic_source_info(span) },
+            Terminator { kind: TerminatorKind::Return, span },
         );
         let ok_bb = source.bb() - 1;
         let mut assign_instr = SourceInstruction::Terminator { bb: ok_bb };
@@ -1761,7 +1744,7 @@ impl AutomaticArbitraryPass {
                 discr: Operand::Copy(Place::from(discr_lcl)),
                 targets: SwitchTargets::new(vec![(ok_idx as u128, ok_bb)], bad_bb),
             },
-            source_info: synthetic_source_info(span),
+            span,
         };
         new_body.replace_terminator(&switch_instr, switch);
 
@@ -1806,10 +1789,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator {
-                kind: TerminatorKind::Unreachable,
-                source_info: synthetic_source_info(span),
-            },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         let switch_int_instr = SourceInstruction::Terminator { bb: source.bb() - 1 };
 
@@ -1839,7 +1819,7 @@ impl AutomaticArbitraryPass {
                 discr: Operand::Copy(Place::from(discr_lcl)),
                 targets: SwitchTargets::new(branches, otherwise),
             },
-            source_info: synthetic_source_info(source.span(new_body.blocks())),
+            span: source.span(new_body.blocks()),
         };
         new_body.replace_terminator(&switch_int_instr, match_term);
 
