@@ -1,0 +1,133 @@
+# Copyright Kani Contributors
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+
+name: Qualification gate
+
+# Runs the fail-closed core-v2 consumer gate (qualification/scripts/core_v1_gate.py)
+# on x86_64-unknown-linux-gnu against real release artifacts from a Release Bundle
+# run. Manual dispatch only: this is freeze evidence, not a per-PR check. The
+# macOS half of the gate runs locally per the qualification operating model.
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Full 40-character SHA of the frozen candidate commit (consumer checkout identity)"
+        required: true
+      artifact_run_id:
+        description: "Release Bundle run ID whose artifacts are gated"
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate-linux-x86_64:
+    name: core-v2 gate (x86_64-unknown-linux-gnu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the qualification program
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          path: program
+
+      - name: Check out the frozen candidate consumer
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.candidate_sha }}
+          path: consumer
+
+      - name: Verify candidate identity
+        run: |
+          HEAD_SHA=$(git -C consumer rev-parse HEAD)
+          if [ "$HEAD_SHA" != "${{ inputs.candidate_sha }}" ]; then
+            echo "::error::consumer checkout $HEAD_SHA != candidate ${{ inputs.candidate_sha }}"
+            exit 1
+          fi
+
+      - name: Download the x86_64 bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: kani-latest-x86_64-unknown-linux-gnu.tar.gz
+          path: artifacts
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download the kani-verifier crate
+        uses: actions/download-artifact@v8
+        with:
+          name: x86_64-unknown-linux-gnu-kani-verifier.crate
+          path: artifacts
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Kani from the crate
+        working-directory: artifacts
+        run: |
+          tar zxvf x86_64-unknown-linux-gnu-kani-verifier.crate
+          cargo install --locked --path kani-verifier-0.67.0
+
+      - name: Fetch and verify the toolchain tarball
+        working-directory: artifacts
+        run: |
+          tar zxvf kani-latest-x86_64-unknown-linux-gnu.tar.gz
+          CHANNEL=$(cat ./kani-latest/rust-toolchain-version | tr -d '[:space:]')
+          CHANNEL="${CHANNEL%-x86_64-unknown-linux-gnu}"
+          if ! [[ "$CHANNEL" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::expected an exact stable channel, got: $CHANNEL"
+            exit 1
+          fi
+          ARCHIVE="rust-${CHANNEL}-x86_64-unknown-linux-gnu.tar.gz"
+          URL="https://static.rust-lang.org/dist/${ARCHIVE}"
+          curl --proto '=https' --tlsv1.2 -fO "$URL"
+          curl --proto '=https' --tlsv1.2 -fO "$URL.sha256"
+          shasum -a 256 -c "${ARCHIVE}.sha256"
+          tar -xzf "${ARCHIVE}"
+          mkdir -p "$RUNNER_TEMP/custom_toolchain"
+          "./${ARCHIVE%.tar.gz}/install.sh" --prefix="$RUNNER_TEMP/custom_toolchain"
+
+      - name: Fail closed on toolchain identity mismatch
+        working-directory: artifacts
+        run: |
+          INSTALLED=$("$RUNNER_TEMP/custom_toolchain/bin/rustc" --version)
+          EXPECTED=$(cat ./kani-latest/rustc-version)
+          echo "Installed: $INSTALLED"
+          echo "Expected:  $EXPECTED"
+          "$RUNNER_TEMP/custom_toolchain/bin/rustc" --version --verbose | grep -i 'LLVM version'
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "::error::toolchain rustc does not match the bundle's recorded rustc"
+            exit 1
+          fi
+
+      - name: Set up Kani with the local bundle and toolchain
+        working-directory: artifacts
+        run: |
+          cargo kani setup --use-local-bundle ./kani-latest-x86_64-unknown-linux-gnu.tar.gz \
+            --use-local-toolchain "$RUNNER_TEMP/custom_toolchain/"
+
+      - name: Record tool identities
+        run: |
+          cargo-kani --version --verbose
+          "$HOME/.kani/kani-0.67.0/bin/cbmc" --version
+          "$HOME/.kani/kani-0.67.0/bin/kissat" --version
+
+      - name: Run the core-v2 gate
+        run: |
+          export KANI_HOME="$HOME/.kani"
+          python3 program/qualification/scripts/core_v1_gate.py \
+            --toolchain program/qualification/manifests/core-v2/toolchain.json \
+            --consumer program/qualification/manifests/core-v2/public-corpus.json \
+            --checkout consumer \
+            --artifact-dir artifacts \
+            --platform x86_64-unknown-linux-gnu \
+            --receipt qualification-gate-x86_64.json
+
+      - name: Upload the gate receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-gate-x86_64-core-v2
+          path: qualification-gate-x86_64.json
