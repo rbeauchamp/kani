@@ -1,0 +1,111 @@
+{
+  "artifacts": {
+    "aarch64-apple-darwin-kani-verifier.crate": {
+      "sha256": "ac1230b2e0b34e55ecb9e8640e76ead5d63b1d0a3fccb74cbcddf087e9169022",
+      "size": 29896
+    },
+    "kani-latest-aarch64-apple-darwin.tar.gz": {
+      "sha256": "0dbd12a6f894fb9a55aa68a9749c4dc4f9da3e3f3d0cbfe7dde69ef2a341c1a6",
+      "size": 109764848
+    }
+  },
+  "command": [
+    "cargo",
+    "kani",
+    "--manifest-path",
+    "/private/tmp/kani-consumer-wt/qualification/fixtures/public-corpus/Cargo.toml",
+    "--exact",
+    "--output-format=terse",
+    "--harness",
+    "check_assume_prunes_branch",
+    "--harness",
+    "check_atomic_alignment_ptr_197",
+    "--harness",
+    "check_bounded_loop_sum",
+    "--harness",
+    "check_char_is_control_197",
+    "--harness",
+    "check_core_range_iter_196",
+    "--harness",
+    "check_lazy_cell_from_196",
+    "--harness",
+    "check_manhattan_metric",
+    "--harness",
+    "check_midpoint_widening",
+    "--harness",
+    "check_repeat_n_default_197",
+    "--harness",
+    "check_sort3_network",
+    "--harness",
+    "check_u32_add_commutes_bounded",
+    "--harness",
+    "check_u32_bit_ops_197"
+  ],
+  "consumer": "public-corpus",
+  "executed_at": "2026-09-08T18:13:06.694407+00:00",
+  "kani": {
+    "commit": "734fcd7fcf4b1f8b3e37434d911209e6300da643",
+    "tree": "ee0a58fd8be2e9e13057d7dbe4de588893d949d3"
+  },
+  "manifest_sha256": {
+    "consumer": "68d53b5ac86c6f9f8bc39d024d629c08e143700d34a9b0229ec133e4039a85c2",
+    "toolchain": "916fa4019ecbf4f706dbfe712ace95cc3f62c7a1e91590772aa68bbb375731b7"
+  },
+  "platform": "aarch64-apple-darwin",
+  "profile": "core-v2",
+  "qualification_status": "qualified",
+  "repository": "https://github.com/rbeauchamp/kani",
+  "result": {
+    "checked_harnesses": [
+      "check_assume_prunes_branch",
+      "check_atomic_alignment_ptr_197",
+      "check_bounded_loop_sum",
+      "check_char_is_control_197",
+      "check_core_range_iter_196",
+      "check_lazy_cell_from_196",
+      "check_manhattan_metric",
+      "check_midpoint_widening",
+      "check_repeat_n_default_197",
+      "check_sort3_network",
+      "check_u32_add_commutes_bounded",
+      "check_u32_bit_ops_197"
+    ],
+    "cover_properties": 3,
+    "summary": {
+      "failed": 0,
+      "successful": 12,
+      "total": 12
+    },
+    "unreachable_checks": {
+      "by_harness": {
+        "check_assume_prunes_branch": 1,
+        "check_char_is_control_197": 2,
+        "check_core_range_iter_196": 1,
+        "check_lazy_cell_from_196": 1,
+        "check_sort3_network": 4,
+        "check_u32_bit_ops_197": 1
+      },
+      "total": 10
+    }
+  },
+  "runner": "local macOS 26.6.2 build 25G83 arm64",
+  "schema": 1,
+  "source": {
+    "commit": "734fcd7fcf4b1f8b3e37434d911209e6300da643",
+    "tree": "ee0a58fd8be2e9e13057d7dbe4de588893d949d3"
+  },
+  "status": "pass",
+  "tools": {
+    "cargo_kani": "Kani Rust Verifier 0.67.0 (734fcd7) (cargo plugin)\nusing rustc 1.97.1 (8bab26f4f 2026-07-14) (commit 8bab26f4 2026-07-14) with LLVM 22.1.6\nCBMC 6.11.0",
+    "cbmc": "6.11.0 (cbmc-6.11.0)",
+    "kissat": "4.0.1"
+  },
+  "unsupported_constructs": [
+    "caller_location",
+    "foreign function"
+  ],
+  "verification_output_sha256": "a77ee03cbacc834fa44d2dd1b70733f895aba0b050166739a4c62e5e5281f967",
+  "warnings": [
+    "use of an unstable feature"
+  ]
+}
