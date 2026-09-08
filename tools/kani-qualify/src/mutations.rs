@@ -12,8 +12,8 @@ use crate::gate::{
     CommandOutput, current_iso_timestamp, executable_sha256, run_with_timeout, sha256_file,
 };
 use crate::model::{
-    GateStatus, MutationPurpose, MutationReceipt, ProbeResult, RuntimeToolIdentities,
-    ToolchainManifest, validate_sha256,
+    ConsumerDiagnostics, ConsumerManifest, GateStatus, MutationPurpose, MutationReceipt,
+    ProbeResult, RuntimeToolIdentities, ToolchainManifest, validate_sha256,
 };
 use crate::parser::{ParsedOutput, parse_kani_output};
 
@@ -225,9 +225,17 @@ fn fixture_hashes(directory: &Path) -> Result<BTreeMap<String, String>, String> 
             hashes.insert(name, sha256_file(&entry.path()).map_err(|e| e.to_string())?);
         }
     }
-    let expected = ["backend_probe.rs", "inadequate_unwind.rs", "vacuity.rs"];
+    let expected = [
+        "backend_probe.rs",
+        "false_assertion.rs",
+        "inadequate_unwind.rs",
+        "partial_pair.rs",
+        "vacuity.rs",
+    ];
     if hashes.keys().map(String::as_str).collect::<Vec<_>>() != expected {
-        return Err("mutation fixture inventory differs from the three declared probes".to_string());
+        return Err(
+            "mutation fixture inventory differs from the five declared fixtures".to_string()
+        );
     }
     Ok(hashes)
 }
@@ -252,6 +260,62 @@ fn single_harness(parsed: &ParsedOutput, name: &str) -> bool {
         && parsed.harnesses.contains_key(name)
         && parsed.warnings.iter().all(|warning| warnings.contains_key(warning))
         && parsed.unsupported_constructs.is_empty()
+}
+
+/// A reachable false assertion fails as one harness with real check failures.
+fn false_assertion_failure(parsed: &ParsedOutput) -> bool {
+    single_harness(parsed, "false_assertion")
+        && parsed.harnesses["false_assertion"].is_fail()
+        && parsed.harnesses["false_assertion"].failed_checks > 0
+}
+
+/// Diagnostics Kani reports when a `--harness` filter matches no harness. The
+/// wording changed with Kani's zero-match failure admission, so both the
+/// current and the previous diagnostic are recognized.
+const ZERO_MATCH_DIAGNOSTICS: [&str; 2] =
+    ["Failed to match the following harness(es)", "no harnesses matched the harness filter"];
+
+fn zero_match_filter_detected(code: Option<i32>, stdout: &str, stderr: &str) -> bool {
+    code.is_some_and(|code| code != 0)
+        && ZERO_MATCH_DIAGNOSTICS
+            .iter()
+            .any(|diagnostic| stdout.contains(diagnostic) || stderr.contains(diagnostic))
+        && !stdout.contains("VERIFICATION:- SUCCESSFUL")
+        && !stderr.contains("VERIFICATION:- SUCCESSFUL")
+}
+
+/// The complete harness set of the partial_pair fixture; any proper subset run
+/// must be rejected as a complete result for this fixture.
+fn partial_pair_consumer() -> ConsumerManifest {
+    ConsumerManifest {
+        schema: 1,
+        profile: "mutation-fixture".to_string(),
+        status: "bootstrap".to_string(),
+        consumer: "partial_pair".to_string(),
+        repository: "https://example.invalid/mutation-fixture".to_string(),
+        source_commit: "0".repeat(40),
+        source_tree: "1".repeat(40),
+        project_dir: ".".to_string(),
+        cargo_manifest: "Cargo.toml".to_string(),
+        cargo_config: None,
+        kani_flags: vec![],
+        expected_harnesses: vec!["partial_one".to_string(), "partial_two".to_string()],
+        expected_cover_properties: 0,
+        expected_unreachable_checks: BTreeMap::new(),
+        unreachable_disposition: None,
+        diagnostics: ConsumerDiagnostics { warnings: vec![], unsupported_constructs: vec![] },
+    }
+}
+
+/// Detection asserts the subset run itself completed cleanly and that the
+/// completion validation rejects it as a result for the full fixture set.
+fn partial_execution_detected(parsed: &ParsedOutput) -> bool {
+    single_harness(parsed, "partial_one")
+        && parsed.harnesses["partial_one"].is_pass()
+        && parsed.harnesses["partial_one"].covers_satisfied()
+        && parsed
+            .validate_against_consumer(&partial_pair_consumer())
+            .is_err_and(|error| error.contains("harness set mismatch"))
 }
 
 pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, String> {
@@ -320,6 +384,23 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
         },
     );
 
+    let false_assertion =
+        run_with_timeout(command("false_assertion.rs")?, Duration::from_secs(120))?;
+    let false_assertion_detected = false_assertion.status.code() == Some(1)
+        && parse_probe_output(&false_assertion).is_ok_and(|p| false_assertion_failure(&p));
+    results.insert(
+        "false_assertion".to_string(),
+        ProbeResult {
+            returncode: false_assertion.status.code(),
+            output_sha256: Some(hash_bytes(false_assertion.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(false_assertion.stderr.as_bytes())),
+            ..ProbeResult::new(
+                false_assertion_detected,
+                "missing complete expected assertion failure",
+            )
+        },
+    );
+
     let vacuity = run_with_timeout(command("vacuity.rs")?, Duration::from_secs(120))?;
     let vacuity_detected = vacuity.status.success()
         && parse_probe_output(&vacuity).is_ok_and(|p| {
@@ -341,8 +422,14 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
 
     let mut sleep_cmd = Command::new("sleep");
     sleep_cmd.arg("5");
-    let timeout_detected = run_with_timeout(sleep_cmd, Duration::from_millis(200))
+    let machinery_timeout = run_with_timeout(sleep_cmd, Duration::from_millis(200))
         .is_err_and(|e| e.contains("timed out"));
+    // A real kani invocation cannot finish within one millisecond; the runner
+    // must kill its process group and report the deadline instead of admitting
+    // partial output.
+    let kani_timeout = run_with_timeout(command("backend_probe.rs")?, Duration::from_millis(1))
+        .is_err_and(|e| e.contains("timed out"));
+    let timeout_detected = machinery_timeout && kani_timeout;
     results.insert(
         "timeout".to_string(),
         ProbeResult::new(timeout_detected, "timeout was not detected"),
@@ -381,6 +468,42 @@ pub fn run_all_mutations(ctx: &MutationContext) -> Result<MutationReceipt, Strin
             ..ProbeResult::new(
                 truncation_detected,
                 "truncated output was accepted or positive control failed",
+            )
+        },
+    );
+
+    let mut zero_match_cmd = command("backend_probe.rs")?;
+    zero_match_cmd.args(["--harness", "no_such_harness_zero_match"]);
+    let zero_match = run_with_timeout(zero_match_cmd, Duration::from_secs(120))?;
+    let zero_match_detected = zero_match_filter_detected(
+        zero_match.status.code(),
+        &zero_match.stdout,
+        &zero_match.stderr,
+    );
+    results.insert(
+        "zero_match_filter".to_string(),
+        ProbeResult {
+            returncode: zero_match.status.code(),
+            output_sha256: Some(hash_bytes(zero_match.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(zero_match.stderr.as_bytes())),
+            ..ProbeResult::new(zero_match_detected, "zero-match harness filter was not rejected")
+        },
+    );
+
+    let mut partial_cmd = command("partial_pair.rs")?;
+    partial_cmd.args(["--harness", "partial_one"]);
+    let partial = run_with_timeout(partial_cmd, Duration::from_secs(120))?;
+    let partial_detected = partial.status.success()
+        && parse_probe_output(&partial).is_ok_and(|p| partial_execution_detected(&p));
+    results.insert(
+        "partial_harness_execution".to_string(),
+        ProbeResult {
+            returncode: partial.status.code(),
+            output_sha256: Some(hash_bytes(partial.stdout.as_bytes())),
+            stderr_sha256: Some(hash_bytes(partial.stderr.as_bytes())),
+            ..ProbeResult::new(
+                partial_detected,
+                "partial harness execution was admitted as a complete result",
             )
         },
     );
@@ -502,5 +625,98 @@ mod tests {
         fs::write(&fixture_file, b"fn main() { panic!(); }").unwrap();
         let modified_hash = sha256_file(&fixture_file).unwrap();
         assert_ne!(initial_hash, modified_hash);
+    }
+
+    #[test]
+    fn test_false_assertion_failure_detection() {
+        let failing = r#"
+Checking harness false_assertion...
+ ** 1 of 2 failed
+Failed Checks: attempt to add with overflow
+VERIFICATION:- FAILED
+Verification failed for - false_assertion
+Complete - 0 successfully verified harnesses, 1 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(failing).unwrap();
+        assert!(false_assertion_failure(&parsed));
+
+        // A passing harness is not the seeded failure.
+        let passing = r#"
+Checking harness false_assertion...
+ ** 0 of 2 failed
+VERIFICATION:- SUCCESSFUL
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(passing).unwrap();
+        assert!(!false_assertion_failure(&parsed));
+
+        // A failure attributed to another harness is not this probe's mutation.
+        let other = failing.replace("false_assertion", "some_other_harness");
+        let parsed = parse_kani_output(&other).unwrap();
+        assert!(!false_assertion_failure(&parsed));
+    }
+
+    #[test]
+    fn test_zero_match_filter_detection() {
+        let diagnostic = "error: Failed to match the following harness(es):\nno_such_harness_zero_match\nPlease specify the fully-qualified name of a harness.\n";
+        assert!(zero_match_filter_detected(Some(1), diagnostic, ""));
+        // The previous zero-match diagnostic wording is also recognized.
+        assert!(zero_match_filter_detected(
+            Some(1),
+            "error: no harnesses matched the harness filter: `no_such_harness_zero_match`\n",
+            ""
+        ));
+        // The diagnostic is admitted from either output stream.
+        assert!(zero_match_filter_detected(Some(2), "", diagnostic));
+        // A successful exit or a missing diagnostic is not a rejection.
+        assert!(!zero_match_filter_detected(Some(0), diagnostic, ""));
+        assert!(!zero_match_filter_detected(Some(1), "unrelated failure\n", ""));
+        // A success marker contradicts the rejection.
+        assert!(!zero_match_filter_detected(
+            Some(1),
+            &format!("{diagnostic}VERIFICATION:- SUCCESSFUL\n"),
+            ""
+        ));
+        // A lost exit code (signal) is not a normal rejection.
+        assert!(!zero_match_filter_detected(None, diagnostic, ""));
+    }
+
+    #[test]
+    fn test_partial_execution_detection() {
+        let subset = r#"
+Checking harness partial_one...
+ ** 0 of 1 failed
+VERIFICATION:- SUCCESSFUL
+Complete - 1 successfully verified harnesses, 0 failures, 1 total.
+"#;
+        let parsed = parse_kani_output(subset).unwrap();
+        assert!(partial_execution_detected(&parsed));
+
+        // The complete pair is a valid full result, not a partial execution.
+        let complete = r#"
+Checking harness partial_one...
+ ** 0 of 1 failed
+VERIFICATION:- SUCCESSFUL
+Checking harness partial_two...
+ ** 0 of 1 failed
+VERIFICATION:- SUCCESSFUL
+Complete - 2 successfully verified harnesses, 0 failures, 2 total.
+"#;
+        let parsed = parse_kani_output(complete).unwrap();
+        assert!(!partial_execution_detected(&parsed));
+
+        // A failing subset run is not a clean partial execution.
+        let failing = subset
+            .replace("0 of 1 failed", "1 of 1 failed")
+            .replace(
+                "VERIFICATION:- SUCCESSFUL",
+                "Failed Checks: assertion failed\nVERIFICATION:- FAILED\nVerification failed for - partial_one",
+            )
+            .replace(
+                "Complete - 1 successfully verified harnesses, 0 failures, 1 total.",
+                "Complete - 0 successfully verified harnesses, 1 failures, 1 total.",
+            );
+        let parsed = parse_kani_output(&failing).unwrap();
+        assert!(!partial_execution_detected(&parsed));
     }
 }

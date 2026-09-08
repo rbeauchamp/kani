@@ -119,8 +119,8 @@ impl ToolchainManifest {
         if self.schema != 1 {
             return Err(format!("invalid or unsupported toolchain schema: {}", self.schema));
         }
-        if self.profile != "core-v1" {
-            return Err(format!("unsupported qualification profile: {}", self.profile));
+        if self.profile.is_empty() {
+            return Err("toolchain manifest profile must be a nonempty string".to_string());
         }
         if self.kani_base.len() != 40 || !self.kani_base.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("toolchain kani_base must be a 40-character hex SHA".to_string());
@@ -209,8 +209,8 @@ impl ConsumerManifest {
         if self.schema != 1 {
             return Err(format!("invalid or unsupported consumer schema: {}", self.schema));
         }
-        if self.profile != "core-v1" {
-            return Err(format!("unsupported qualification profile: {}", self.profile));
+        if self.profile.is_empty() {
+            return Err("consumer manifest profile must be a nonempty string".to_string());
         }
         if self.status != "bootstrap" && self.status != "qualified" {
             return Err(format!(
@@ -248,7 +248,8 @@ impl ConsumerManifest {
         }
         if !self.kani_flags.is_empty() {
             return Err(
-                "core-v1 qualifies default verification flags only (empty kani_flags)".to_string()
+                "qualified profiles accept the default verification flags only (empty kani_flags)"
+                    .to_string(),
             );
         }
         for (harness, count) in &self.expected_unreachable_checks {
@@ -452,7 +453,7 @@ impl InputRunEvidence {
         }
         if self.argv != argv {
             return Err(format!(
-                "run {} invocation differs from the admitted core-v1 command",
+                "run {} invocation differs from the admitted qualification command",
                 self.run_id
             ));
         }
@@ -528,6 +529,7 @@ impl CompositeReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_toolchain_manifest_deserialization() {
@@ -538,6 +540,70 @@ mod tests {
         assert_eq!(manifest.profile, "core-v1");
         assert!(manifest.cbmc_version.contains("6.10.0"));
         assert!(manifest.platforms.contains_key("x86_64-unknown-linux-gnu"));
+    }
+
+    #[test]
+    fn test_successor_profile_names_accepted() {
+        let raw = include_str!("../../../qualification/manifests/core-v1/toolchain.json");
+        let mut toolchain: ToolchainManifest = serde_json::from_str(raw).unwrap();
+        toolchain.profile = "core-v2".to_string();
+        toolchain.validate().unwrap();
+
+        let raw = include_str!("../../../qualification/manifests/core-v2/public-corpus.json");
+        let consumer: ConsumerManifest = serde_json::from_str(raw).unwrap();
+        assert_eq!(consumer.profile, "core-v2");
+        consumer.validate().unwrap();
+    }
+
+    #[test]
+    fn test_empty_profile_rejected() {
+        let raw = include_str!("../../../qualification/manifests/core-v1/toolchain.json");
+        let mut toolchain: ToolchainManifest = serde_json::from_str(raw).unwrap();
+        toolchain.profile = String::new();
+        let err = toolchain.validate().unwrap_err();
+        assert!(err.contains("profile must be a nonempty string"));
+
+        let raw = include_str!("../../../qualification/manifests/core-v2/public-corpus.json");
+        let mut consumer: ConsumerManifest = serde_json::from_str(raw).unwrap();
+        consumer.profile = String::new();
+        let err = consumer.validate().unwrap_err();
+        assert!(err.contains("profile must be a nonempty string"));
+    }
+
+    /// Every checked-in manifest must validate, and each manifest's profile must
+    /// equal its profile directory name (mirrors the Python gate test).
+    #[test]
+    fn test_checked_in_manifests_validate() {
+        let manifests = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../qualification/manifests");
+        let mut profile_dirs: Vec<_> = fs::read_dir(&manifests)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_dir())
+            .collect();
+        profile_dirs.sort();
+        assert!(!profile_dirs.is_empty());
+        for profile_dir in profile_dirs {
+            let profile = profile_dir.file_name().unwrap().to_string_lossy().into_owned();
+            let mut manifests: Vec<_> = fs::read_dir(&profile_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+                .collect();
+            manifests.sort();
+            assert!(!manifests.is_empty(), "{profile} has no manifests");
+            for path in manifests {
+                let raw = fs::read_to_string(&path).unwrap();
+                if path.file_name().unwrap() == "toolchain.json" {
+                    let toolchain: ToolchainManifest = serde_json::from_str(&raw).unwrap();
+                    assert_eq!(toolchain.profile, profile);
+                    toolchain.validate().unwrap();
+                } else {
+                    let consumer: ConsumerManifest = serde_json::from_str(&raw).unwrap();
+                    assert_eq!(consumer.profile, profile);
+                    consumer.validate().unwrap();
+                }
+            }
+        }
     }
 
     #[test]

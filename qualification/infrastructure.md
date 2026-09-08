@@ -101,7 +101,7 @@ and `kani-compiler`. Backend siblings take precedence; otherwise explicit `PATH`
 resolution selects CBMC and Kissat. Private executable links bind those selected
 backends to the names the driver invokes. Version queries require normal exit
 zero, nonempty stdout, empty stderr, and a 30-second deadline. Driver, compiler,
-and backend hashes are checked before and after the probes. The three fixture
+and backend hashes are checked before and after the probes. The five fixture
 sources are copied to a private directory; both source and execution copies are
 hashed and checked for drift.
 
