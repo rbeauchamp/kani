@@ -1,0 +1,213 @@
+# Copyright Kani Contributors
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+#
+# Qualified macOS release packaging (issue #8, Phase 1).
+#
+# This workflow automates, for aarch64-apple-darwin, the manual steps that
+# produced the `qualified-0.67.0+20260908.1` prerelease (recorded in
+# qualification/releases/qualified-0.67.0+20260908.1/):
+#   1. Build the bundle via ./.github/actions/build-bundle on macos-14.
+#   2. Rename the bundle to the qualified distribution name
+#      (kani-<ver>+qualified.<date>.<n>-aarch64-apple-darwin.tar.gz);
+#      contents stay byte-identical, only the release-facing name changes.
+#   3. Generate SHA256SUMS over the published assets and a detached GPG
+#      signature SHA256SUMS.asc, after verifying the signed annotated tag.
+#   4. Create a GitHub prerelease with those assets.
+#   5. Emit a repository_dispatch event for the Homebrew tap (best effort).
+#
+# It triggers only on `qualified-*` tags. It never runs on upstream-style
+# `kani-*` release tags (handled by release.yml) and it fails closed rather
+# than touching any release that already exists.
+name: Qualified macOS Release
+permissions:
+  contents: read
+on:
+  push:
+    tags:
+      - qualified-*
+
+env:
+  RUST_BACKTRACE: 1
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+concurrency:
+  group: qualified-macos-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build_bundle_macos_aarch64:
+    name: BuildBundle-MacOs-aarch64
+    runs-on: macos-14
+    outputs:
+      bundle: ${{ steps.bundle.outputs.bundle }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Kani Dependencies
+        uses: ./.github/actions/setup
+        with:
+          os: macos-14
+
+      - name: Build bundle
+        id: bundle
+        uses: ./.github/actions/build-bundle
+        with:
+          platform: aarch64-apple-darwin
+
+  publish:
+    name: Publish-Qualified-Prerelease
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/qualified-') }}
+    needs: [build_bundle_macos_aarch64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          # Full history so the annotated tag object is available for
+          # `git tag -v` signature verification.
+          fetch-depth: 0
+
+      - name: Download bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build_bundle_macos_aarch64.outputs.bundle }}
+
+      - name: Derive distribution version from tag (fail closed)
+        id: dist
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          case "$TAG" in
+            qualified-*) ;;
+            *) echo "::error::Refusing to publish non-qualified tag: $TAG"; exit 1 ;;
+          esac
+          REST="${TAG#qualified-}"
+          # Tag shape: qualified-<semver>+<yyyymmdd>.<n>, e.g.
+          # qualified-0.67.0+20260908.1 -> 0.67.0+qualified.20260908.1
+          if [[ "$REST" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]{8}\.[0-9]+)$ ]]; then
+            DIST_VERSION="${BASH_REMATCH[1]}+qualified.${BASH_REMATCH[2]}"
+          else
+            echo "::error::Unexpected qualified tag shape: $TAG (expected qualified-<semver>+<yyyymmdd>.<n>)"
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "dist_version=$DIST_VERSION"
+            echo "qualified_bundle=kani-${DIST_VERSION}-aarch64-apple-darwin.tar.gz"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Import release signing key (fail closed)
+        env:
+          QUALIFIED_GPG_PRIVATE_KEY: ${{ secrets.QUALIFIED_GPG_PRIVATE_KEY }}
+        run: |
+          echo "$QUALIFIED_GPG_PRIVATE_KEY" | gpg --batch --yes --import
+          KEY_ID="$(gpg --list-secret-keys --keyid-format LONG | awk '/^sec/{print $2; exit}' | cut -d/ -f2)"
+          if [ -z "$KEY_ID" ]; then
+            echo "::error::QUALIFIED_GPG_PRIVATE_KEY did not yield a secret key"
+            exit 1
+          fi
+          echo "KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          gpg --list-secret-keys --keyid-format LONG
+
+      - name: Verify the signed annotated tag (fail closed)
+        run: |
+          # The tag is signed with the same key that signs SHA256SUMS, so the
+          # import above provides the public key needed for verification.
+          git tag -v "${{ steps.dist.outputs.tag }}"
+
+      - name: Rename bundle to the qualified distribution name
+        run: |
+          SRC="${{ needs.build_bundle_macos_aarch64.outputs.bundle }}"
+          DST="${{ steps.dist.outputs.qualified_bundle }}"
+          if [ ! -f "$SRC" ]; then
+            echo "::error::Expected bundle $SRC not found"
+            exit 1
+          fi
+          # Rename only; the bundle contents remain byte-identical.
+          mv "$SRC" "$DST"
+
+      - name: Generate SHA256SUMS over the published assets
+        run: sha256sum "${{ steps.dist.outputs.qualified_bundle }}" > SHA256SUMS
+
+      - name: Sign SHA256SUMS (fail closed)
+        env:
+          QUALIFIED_GPG_PASSPHRASE: ${{ secrets.QUALIFIED_GPG_PASSPHRASE }}
+        run: |
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$QUALIFIED_GPG_PASSPHRASE" \
+            --local-user "$KEY_ID" \
+            --armor --detach-sign -o SHA256SUMS.asc SHA256SUMS
+          gpg --verify SHA256SUMS.asc SHA256SUMS
+
+      - name: Write release notes
+        run: |
+          DIST_VERSION="${{ steps.dist.outputs.dist_version }}"
+          QUALIFIED_BUNDLE="${{ steps.dist.outputs.qualified_bundle }}"
+          cat > release-notes.md <<EOF
+          ## Kani ${DIST_VERSION} — unofficial downstream qualified distribution
+
+          This is an **unofficial downstream qualified distribution** of the Kani
+          Rust verifier, published from the fork
+          [\`rbeauchamp/kani\`](https://github.com/rbeauchamp/kani). It is **not
+          sponsored or endorsed by AWS or the upstream Kani maintainers**. Kani is
+          dual-licensed under **Apache-2.0 OR MIT**; those terms are preserved.
+
+          ## Assets
+
+          - \`${QUALIFIED_BUNDLE}\` — macOS Apple Silicon
+            (\`aarch64-apple-darwin\`) bundle. Its contents are byte-identical to
+            the bundle built by this workflow; only the release-facing filename
+            changed.
+          - \`SHA256SUMS\` — SHA-256 digests of the published assets.
+          - \`SHA256SUMS.asc\` — detached GPG signature over \`SHA256SUMS\`.
+
+          The release tag is a signed annotated tag.
+
+          ## Verification
+
+          \`\`\`bash
+          shasum -a 256 -c SHA256SUMS
+          gpg --verify SHA256SUMS.asc SHA256SUMS
+          \`\`\`
+
+          ## Installation
+
+          Extract the bundle and point the installer at it instead of the official
+          release channel:
+
+          \`\`\`bash
+          cargo kani setup --use-local-bundle ./${QUALIFIED_BUNDLE}
+          \`\`\`
+          EOF
+
+      - name: Create prerelease (fails if a release for this tag already exists)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.dist.outputs.tag }}" \
+            --prerelease \
+            --title "${{ steps.dist.outputs.dist_version }}" \
+            --notes-file release-notes.md \
+            "${{ steps.dist.outputs.qualified_bundle }}" \
+            SHA256SUMS \
+            SHA256SUMS.asc
+
+      # The Homebrew tap (rbeauchamp/homebrew-kani, owned by the parallel
+      # Phase-2 effort) will consume this event to update the formula
+      # checksums. The default GITHUB_TOKEN cannot dispatch to another
+      # repository, so this step is expected to fail until the tap wires up a
+      # token; it must never fail the release itself.
+      - name: Notify the Homebrew tap (best effort)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DIGEST="$(sha256sum "${{ steps.dist.outputs.qualified_bundle }}" | awk '{print $1}')"
+          gh api repos/rbeauchamp/homebrew-kani/dispatches \
+            -f event_type=qualified-release-published \
+            -F "client_payload[tag]=${{ steps.dist.outputs.tag }}" \
+            -F "client_payload[dist_version]=${{ steps.dist.outputs.dist_version }}" \
+            -F "client_payload[bundle]=${{ steps.dist.outputs.qualified_bundle }}" \
+            -F "client_payload[sha256]=$DIGEST"
