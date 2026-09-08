@@ -32,7 +32,7 @@ use rustc_public::ty::{
     AdtDef, AdtKind, FnDef, GenericArgKind, GenericArgs, MirConst, Region, RegionKind, RigidTy, Ty,
     TyConst, TyKind, UintTy, VariantDef, VariantIdx,
 };
-use rustc_public::{CrateDef, CrateDefType};
+use rustc_public::CrateDef;
 use rustc_public_bridge::IndexedVal;
 use tracing::debug;
 
@@ -629,7 +629,7 @@ fn inline_with_assumed_panics(
     let planned = ctx.planned;
 
     // Commit: split the caller and append all planned blocks at their precomputed indices.
-    let placeholder = Terminator { kind: TerminatorKind::Goto { target: outer_base }, span: span };
+    let placeholder = Terminator { kind: TerminatorKind::Goto { target: outer_base }, span };
     let (_goto_bb, actual_continuation) = body.split_with_terminator(source, placeholder);
     assert_eq!(actual_continuation, continuation);
     for bb in planned {
@@ -1579,7 +1579,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Return, span: span },
+            Terminator { kind: TerminatorKind::Return, span },
         );
         Some(new_body.into())
     }
@@ -1690,7 +1690,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Unreachable, span: span },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         let switch_instr = SourceInstruction::Terminator { bb: source.bb() - 1 };
 
@@ -1712,7 +1712,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Unreachable, span: span },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         // insert_call + terminator added two blocks; the failure branch starts at the first.
         let bad_bb = source.bb() - 2;
@@ -1728,7 +1728,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Return, span: span },
+            Terminator { kind: TerminatorKind::Return, span },
         );
         let ok_bb = source.bb() - 1;
         let mut assign_instr = SourceInstruction::Terminator { bb: ok_bb };
@@ -1744,7 +1744,7 @@ impl AutomaticArbitraryPass {
                 discr: Operand::Copy(Place::from(discr_lcl)),
                 targets: SwitchTargets::new(vec![(ok_idx as u128, ok_bb)], bad_bb),
             },
-            span: span,
+            span,
         };
         new_body.replace_terminator(&switch_instr, switch);
 
@@ -1789,7 +1789,7 @@ impl AutomaticArbitraryPass {
         new_body.insert_terminator(
             &mut source,
             InsertPosition::Before,
-            Terminator { kind: TerminatorKind::Unreachable, span: span },
+            Terminator { kind: TerminatorKind::Unreachable, span },
         );
         let switch_int_instr = SourceInstruction::Terminator { bb: source.bb() - 1 };
 

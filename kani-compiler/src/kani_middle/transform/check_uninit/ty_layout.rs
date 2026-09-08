@@ -5,7 +5,6 @@
 
 use std::fmt::Display;
 
-use rustc_public::CrateDefType;
 use rustc_public::{
     abi::{FieldsShape, Scalar, TagEncoding, ValueAbi, VariantsShape},
     target::{MachineInfo, MachineSize},

@@ -548,7 +548,7 @@ impl FunctionWithContractPass {
         }
         new_body.replace_terminator(
             &mode_call,
-            Terminator { kind: TerminatorKind::Goto { target }, span: span },
+            Terminator { kind: TerminatorKind::Goto { target }, span },
         );
 
         new_body.into()

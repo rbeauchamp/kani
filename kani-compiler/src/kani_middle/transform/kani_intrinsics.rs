@@ -22,7 +22,6 @@ use crate::kani_middle::transform::check_values::{build_limits, ty_validity_per_
 use crate::kani_middle::transform::{TransformPass, TransformationType};
 use crate::kani_queries::QueryDb;
 use rustc_middle::ty::TyCtxt;
-use rustc_public::CrateDefType;
 use rustc_public::mir::mono::Instance;
 use rustc_public::mir::{
     AggregateKind, BasicBlock, BinOp, Body, ConstOperand, Local, Mutability, Operand, Place,
@@ -151,7 +150,7 @@ impl IntrinsicGeneratorPass {
                 WithRetag::No,
             ),
         );
-        let stmt = Statement { kind: assign, span: span };
+        let stmt = Statement { kind: assign, span };
         new_body.insert_stmt(stmt, &mut terminator, InsertPosition::Before);
         let machine_info = MachineInfo::target();
 
@@ -175,7 +174,7 @@ impl IntrinsicGeneratorPass {
                         Operand::Move(Place::from(result)),
                     );
                     let assign = StatementKind::Assign(Place::from(ret_var), rvalue);
-                    let stmt = Statement { kind: assign, span: span };
+                    let stmt = Statement { kind: assign, span };
                     new_body.insert_stmt(stmt, &mut terminator, InsertPosition::Before);
                 }
             }
@@ -226,7 +225,7 @@ impl IntrinsicGeneratorPass {
                 ),
             );
             new_body.insert_stmt(
-                Statement { kind: assign, span: span },
+                Statement { kind: assign, span },
                 &mut source,
                 InsertPosition::Before,
             );
@@ -264,7 +263,7 @@ impl IntrinsicGeneratorPass {
                                 ),
                             );
                             new_body.insert_stmt(
-                                Statement { kind: assign, span: span },
+                                Statement { kind: assign, span },
                                 &mut source,
                                 InsertPosition::Before,
                             );

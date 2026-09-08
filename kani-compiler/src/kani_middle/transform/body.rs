@@ -154,7 +154,7 @@ impl MutableBody {
         let ret_ty = rvalue.ty(&self.locals).unwrap();
         let result = self.new_local(ret_ty, span, Mutability::Not);
         let stmt =
-            Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span: span };
+            Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span };
         self.insert_stmt(stmt, source, position);
         result
     }
@@ -168,7 +168,7 @@ impl MutableBody {
         position: InsertPosition,
     ) {
         let span = source.span(&self.blocks);
-        let stmt = Statement { kind: StatementKind::Assign(place, rvalue), span: span };
+        let stmt = Statement { kind: StatementKind::Assign(place, rvalue), span };
         self.insert_stmt(stmt, source, position);
     }
 
@@ -215,7 +215,7 @@ impl MutableBody {
             target: Some(new_bb),
             unwind: UnwindAction::Terminate,
         };
-        let terminator = Terminator { kind, span: span };
+        let terminator = Terminator { kind, span };
         self.insert_terminator(source, position, terminator);
     }
 
@@ -244,7 +244,7 @@ impl MutableBody {
             target: Some(new_bb),
             unwind: UnwindAction::Terminate,
         };
-        let terminator = Terminator { kind, span: span };
+        let terminator = Terminator { kind, span };
         self.insert_terminator(source, position, terminator);
     }
 
@@ -423,7 +423,7 @@ impl MutableBody {
                             statements: vec![new_stmt],
                             terminator: Terminator {
                                 kind: TerminatorKind::Goto { target: *target_bb },
-                                span: span,
+                                span,
                             },
                         };
                         *target_bb = new_bb_idx;

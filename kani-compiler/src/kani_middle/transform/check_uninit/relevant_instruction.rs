@@ -275,7 +275,7 @@ fn mk_ref(
         let ret_ty = rvalue.ty(body.locals()).unwrap();
         let result = body.new_local(ret_ty, span, Mutability::Not);
         let stmt =
-            Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span: span };
+            Statement { kind: StatementKind::Assign(Place::from(result), rvalue), span };
         statements.push(stmt);
         result
     };
