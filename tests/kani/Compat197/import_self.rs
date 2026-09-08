@@ -19,7 +19,11 @@ mod some_mod {
     }
 }
 
+// `rustfmt::skip`: rustfmt normalizes `use m::self as a;` to `use m as a;`,
+// which would remove exactly the 1.97.0 grammar forms under test.
+#[rustfmt::skip]
 use some_mod::SomeEnum::self as Alias;
+#[rustfmt::skip]
 use some_mod::self as alias;
 
 #[kani::proof]
