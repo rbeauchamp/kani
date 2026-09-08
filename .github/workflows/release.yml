@@ -166,7 +166,8 @@ jobs:
           # failure on download or checksum mismatch.
           curl --proto '=https' --tlsv1.2 -fO "$TOOLCHAIN_URL"
           curl --proto '=https' --tlsv1.2 -fO "$TOOLCHAIN_URL.sha256"
-          echo "$(cat "${ARCHIVE}.sha256")  ${ARCHIVE}" | shasum -a 256 -c -
+          # The official .sha256 sidecar already contains "<hash>  <filename>".
+          shasum -a 256 -c "${ARCHIVE}.sha256"
           tar -xzf "${ARCHIVE}"
           "./${ARCHIVE%.tar.gz}/install.sh" --prefix=${{ github.workspace }}/../custom_toolchain
 
