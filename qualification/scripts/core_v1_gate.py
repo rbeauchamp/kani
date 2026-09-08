@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Kani Contributors
 # SPDX-License-Identifier: Apache-2.0 OR MIT
-"""Fail-closed artifact and consumer gate for the downstream core-v1 profile."""
+"""Fail-closed artifact and consumer gate for downstream qualified profiles."""
 
 from __future__ import annotations
 
@@ -160,6 +160,11 @@ def require_keys(document: dict[str, Any], expected: set[str], label: str) -> No
         )
 
 
+def validate_profile_name(profile: Any, label: str) -> None:
+    if not isinstance(profile, str) or not profile:
+        raise GateError(f"{label} profile must be a nonempty string")
+
+
 def validate_toolchain_manifest(document: dict[str, Any]) -> None:
     require_keys(
         document,
@@ -175,8 +180,9 @@ def validate_toolchain_manifest(document: dict[str, Any]) -> None:
         },
         "toolchain manifest",
     )
-    if document["schema"] != 1 or document["profile"] != "core-v1":
-        raise GateError("unsupported toolchain manifest schema or profile")
+    if document["schema"] != 1:
+        raise GateError("unsupported toolchain manifest schema")
+    validate_profile_name(document["profile"], "toolchain manifest")
     if not re.fullmatch(r"[0-9a-f]{40}", document["kani_base"]):
         raise GateError("toolchain Kani base must be a full 40-character SHA")
     if not re.fullmatch(r"[0-9a-f]{40}", document["kani_tree"]):
@@ -227,8 +233,9 @@ def validate_consumer_manifest(document: dict[str, Any]) -> None:
         },
         "consumer manifest",
     )
-    if document["schema"] != 1 or document["profile"] != "core-v1":
-        raise GateError("unsupported consumer manifest schema or profile")
+    if document["schema"] != 1:
+        raise GateError("unsupported consumer manifest schema")
+    validate_profile_name(document["profile"], "consumer manifest")
     if document["status"] not in {"bootstrap", "qualified"}:
         raise GateError("consumer status must be bootstrap or qualified")
     for key in ("source_commit", "source_tree"):
@@ -248,7 +255,7 @@ def validate_consumer_manifest(document: dict[str, Any]) -> None:
         raise GateError("Kani flags must be a string list")
     if document["kani_flags"]:
         raise GateError(
-            "core-v1 currently qualifies the default verification flags only"
+            "qualified profiles accept the default verification flags only"
         )
     validate_invocation(document["kani_flags"])
     if (
@@ -283,15 +290,22 @@ def validate_consumer_manifest(document: dict[str, Any]) -> None:
     )
 
 
+def validate_profile_agreement(
+    toolchain: dict[str, Any], consumer: dict[str, Any]
+) -> None:
+    if toolchain["profile"] != consumer["profile"]:
+        raise GateError("toolchain and consumer profiles differ")
+
+
 def validate_invocation(arguments: list[str]) -> None:
     for index, argument in enumerate(arguments):
         if argument in PROHIBITED_EXACT_ARGS or argument.startswith(PROHIBITED_ARG_PREFIXES):
-            raise GateError(f"core-v1 prohibits Kani argument {argument!r}")
+            raise GateError(f"the qualification gate prohibits Kani argument {argument!r}")
         if argument.startswith("--output-format=") and argument != "--output-format=terse":
-            raise GateError("core-v1 requires --output-format=terse")
+            raise GateError("the qualification gate requires --output-format=terse")
         if argument == "--output-format":
             if index + 1 >= len(arguments) or arguments[index + 1] != "terse":
-                raise GateError("core-v1 requires --output-format=terse")
+                raise GateError("the qualification gate requires --output-format=terse")
         feature = None
         if argument == "-Z":
             if index + 1 >= len(arguments):
@@ -304,7 +318,7 @@ def validate_invocation(arguments: list[str]) -> None:
 
         if feature is not None and feature in PROHIBITED_UNSTABLE_FEATURES:
             raise GateError(
-                f"core-v1 prohibits unstable feature {feature!r}"
+                f"the qualification gate prohibits unstable feature {feature!r}"
             )
 
 
@@ -533,8 +547,7 @@ def execute_gate(args: argparse.Namespace) -> dict[str, Any]:
     consumer = load_json(consumer_path)
     validate_toolchain_manifest(toolchain)
     validate_consumer_manifest(consumer)
-    if consumer["profile"] != toolchain["profile"]:
-        raise GateError("toolchain and consumer profiles differ")
+    validate_profile_agreement(toolchain, consumer)
 
     project = (checkout / consumer["project_dir"]).resolve()
     try:
@@ -665,12 +678,12 @@ def main() -> int:
     try:
         receipt = execute_gate(args)
         print(
-            f"CORE-V1 GATE: PASS ({receipt['consumer']}: "
+            f"QUALIFICATION GATE: PASS ({receipt['consumer']}: "
             f"{receipt['result']['summary']['total']} harnesses)"
         )
         return 0
     except GateError as error:
-        print(f"CORE-V1 GATE: VIOLATION: {error}", file=sys.stderr)
+        print(f"QUALIFICATION GATE: VIOLATION: {error}", file=sys.stderr)
         return 1
 
 
