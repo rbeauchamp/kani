@@ -1,0 +1,94 @@
+{
+  "schema": 2,
+  "purpose": "qualification_mutations",
+  "profile": "core-v2",
+  "executed_at": "2026-09-08T18:23:57Z",
+  "gate_sha256": "337323d24fcd83a143edac0033b58f5c57d173dab149dd5c2aeb0ba81c83b102",
+  "toolchain_sha256": "916fa4019ecbf4f706dbfe712ace95cc3f62c7a1e91590772aa68bbb375731b7",
+  "observed_runtime": {
+    "cargo_kani_version": "Kani Rust Verifier 0.67.0 (734fcd7) (cargo plugin)\nusing rustc 1.97.1 (8bab26f4f 2026-07-14) (commit 8bab26f4 2026-07-14) with LLVM 22.1.6\nCBMC 6.11.0",
+    "cargo_kani_sha256": "579f63c278b14d7f3232bdca835a3f5cb7934014c3331b077b4fa646526cd696",
+    "kani_sha256": "579f63c278b14d7f3232bdca835a3f5cb7934014c3331b077b4fa646526cd696",
+    "kani_compiler_sha256": "ff32c1475edbc37fb783d631720dc479a7f06afd296a63aea74348eb25823cf0",
+    "cbmc_version": "6.11.0 (cbmc-6.11.0)",
+    "cbmc_sha256": "db1a99dc5187df6f67be351555aa7951d10f37700eccc7ea726d441594675e77",
+    "kissat_version": "4.0.1",
+    "kissat_sha256": "ae5e2b2efe297e8b585aa42691c0648896cc29be5f8d19ebe6239e5d600bc376"
+  },
+  "snapshot_hashes": {
+    "backend_probe.rs": "04f299a4d16acb76891b2986d322318daf980f3f98738d972dfa242b10fee2f9",
+    "false_assertion.rs": "9fcff36059cb6b9c7557970265b8a3e35b2f2ea31116b88f27ece1f0dc96cac8",
+    "inadequate_unwind.rs": "7ae36fbd85895d1a9c74d3b456f11600ced0ab862f9919d4c13e0f88cb5dc754",
+    "partial_pair.rs": "21028c7db4463cfb6ed27fcbf08d294526d85aabccc186b8a4f560abe4220fa1",
+    "vacuity.rs": "ad7b5b058e4fd3ffe273227c4595ea137c71cafd191fa4dec52ba8ab5f0dd15f"
+  },
+  "warning_dispositions": {
+    "1 warning emitted": "rustc summary of the reviewed register_tool warning",
+    "use of an unstable feature": "Kani injects feature(register_tool) for single-file compilation; the public fixtures use no unstable Rust feature"
+  },
+  "fixtures": {
+    "backend_probe.rs": "04f299a4d16acb76891b2986d322318daf980f3f98738d972dfa242b10fee2f9",
+    "false_assertion.rs": "9fcff36059cb6b9c7557970265b8a3e35b2f2ea31116b88f27ece1f0dc96cac8",
+    "inadequate_unwind.rs": "7ae36fbd85895d1a9c74d3b456f11600ced0ab862f9919d4c13e0f88cb5dc754",
+    "partial_pair.rs": "21028c7db4463cfb6ed27fcbf08d294526d85aabccc186b8a4f560abe4220fa1",
+    "vacuity.rs": "ad7b5b058e4fd3ffe273227c4595ea137c71cafd191fa4dec52ba8ab5f0dd15f"
+  },
+  "results": {
+    "backend_failure": {
+      "detected": true,
+      "returncode": 1,
+      "output_sha256": "ce4691c1b4a3fe677c77e511bc057f53eb60aa1b826a92a281d24f7af88b6420",
+      "stderr_sha256": "9f247e6a6bb6265ffeed48b45aa884434001b6da53a818f27e2c2600ee12fd28"
+    },
+    "bad_runtime_cbmc": {
+      "detected": true
+    },
+    "false_assertion": {
+      "detected": true,
+      "returncode": 1,
+      "output_sha256": "8c039fc4598158bef3f35933012799eafd6ddb94104fa96ee3352e8275db2315",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    },
+    "inadequate_unwind": {
+      "detected": true,
+      "returncode": 1,
+      "output_sha256": "cbed700e87081b334e2d5676f603bac92a8e3df697c76145c53ae54a665df938",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    },
+    "parser_truncation": {
+      "detected": true,
+      "positive_control_returncode": 0,
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4",
+      "complete_output_sha256": "3cbbca4aa04c7a2f068b002765e830410afa2a2e39beec6a6ab0bcd02deb6970",
+      "truncated_output_sha256": "716c8620420c26cc684a338ca84e502d776f8ddf0506325210cd19c9f76d3f90"
+    },
+    "partial_harness_execution": {
+      "detected": true,
+      "returncode": 0,
+      "output_sha256": "846aeb06b4d76dbce840b6e956fbb50536e237c6e39555247c68bfb1deaf89e3",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    },
+    "positive_control": {
+      "detected": true,
+      "returncode": 0,
+      "output_sha256": "3cbbca4aa04c7a2f068b002765e830410afa2a2e39beec6a6ab0bcd02deb6970",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    },
+    "timeout": {
+      "detected": true
+    },
+    "vacuity": {
+      "detected": true,
+      "kani_returncode": 0,
+      "output_sha256": "c4477b09c5903b30ac09d8035c2e670435f66f076ae7863a491071e164f2befd",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    },
+    "zero_match_filter": {
+      "detected": true,
+      "returncode": 1,
+      "output_sha256": "035334ac162e34fa887497f96e4de6639750ecd79b3f69054443f30dc56a355e",
+      "stderr_sha256": "aa37d2e86bc636bcd67aa0145945d3c3f3da9233bb0dd8c1008975c5909a2fb4"
+    }
+  },
+  "status": "pass"
+}
