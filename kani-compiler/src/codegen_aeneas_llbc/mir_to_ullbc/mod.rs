@@ -69,7 +69,7 @@ use rustc_public::ty::{
     GenericParamDefKind, IntTy, MirConst, Region, RegionKind, RigidTy, Span, TraitDecl, TraitDef,
     Ty, TyConst, TyConstKind, TyKind, UintTy, VariantIdx,
 };
-use rustc_public::{CrateDef, DefId};
+use rustc_public::{CrateDef, CrateDefType, DefId};
 use rustc_public_bridge::IndexedVal;
 use std::collections::HashMap;
 use std::iter::zip;
@@ -1219,7 +1219,7 @@ impl<'a, 'tcx> Context<'a, 'tcx> {
         let abort_block = CharonBlockData {
             statements: Vec::new(),
             terminator: CharonTerminator {
-                span.clone(),
+                span: span.clone(),
                 content: CharonRawTerminator::Abort(CharonAbortKind::UndefinedBehavior),
                 comments_before: Vec::new(),
             },
