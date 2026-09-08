@@ -17,7 +17,7 @@ use rustc_public::ty::{
     TyKind,
 };
 use rustc_public::visitor::{Visitable, Visitor as TyVisitor};
-use rustc_public::{CrateDef, DefId, local_crate};
+use rustc_public::{CrateDef, CrateDefType, DefId, local_crate};
 use std::ops::ControlFlow;
 
 use self::attributes::KaniAttributes;
@@ -107,6 +107,7 @@ pub mod coercion;
 mod intrinsics;
 pub mod kani_functions;
 pub mod metadata;
+pub mod mined_invariants;
 pub mod points_to;
 pub mod provide;
 pub mod reachability;
@@ -333,6 +334,7 @@ pub fn uses_ctor_generation(
     tcx: TyCtxt,
     ty: Ty,
     kani_any_def: FnDef,
+    kani_assert_def: FnDef,
     ty_arbitrary_cache: &mut FxHashMap<Ty, bool>,
     visited: &mut Vec<Ty>,
 ) -> bool {
@@ -342,13 +344,34 @@ pub fn uses_ctor_generation(
     visited.push(ty);
     match ty.kind() {
         TyKind::RigidTy(RigidTy::Ref(_, inner, _)) | TyKind::RigidTy(RigidTy::RawPtr(inner, _)) => {
-            uses_ctor_generation(tcx, inner, kani_any_def, ty_arbitrary_cache, visited)
+            uses_ctor_generation(
+                tcx,
+                inner,
+                kani_any_def,
+                kani_assert_def,
+                ty_arbitrary_cache,
+                visited,
+            )
         }
         TyKind::RigidTy(RigidTy::Array(inner, _)) | TyKind::RigidTy(RigidTy::Slice(inner)) => {
-            uses_ctor_generation(tcx, inner, kani_any_def, ty_arbitrary_cache, visited)
+            uses_ctor_generation(
+                tcx,
+                inner,
+                kani_any_def,
+                kani_assert_def,
+                ty_arbitrary_cache,
+                visited,
+            )
         }
         TyKind::RigidTy(RigidTy::Tuple(elems)) => elems.iter().any(|elem| {
-            uses_ctor_generation(tcx, *elem, kani_any_def, ty_arbitrary_cache, visited)
+            uses_ctor_generation(
+                tcx,
+                *elem,
+                kani_any_def,
+                kani_assert_def,
+                ty_arbitrary_cache,
+                visited,
+            )
         }),
         TyKind::RigidTy(RigidTy::Adt(def, args)) => {
             // Hand-written Arbitrary implementations take precedence over ctor generation
@@ -369,20 +392,31 @@ pub fn uses_ctor_generation(
             {
                 return true;
             }
+            // Mined-invariant assumptions are heuristic filters like constructor-based
+            // generation, so harnesses using them carry the same marker.
+            if !mined_invariants::mine_self_assert_conjuncts(tcx, ty, kani_assert_def).is_empty() {
+                return true;
+            }
             def.variants_iter().any(|variant| {
                 variant.fields().iter().any(|field| {
                     uses_ctor_generation(
                         tcx,
                         field.ty_with_args(&args),
                         kani_any_def,
+                        kani_assert_def,
                         ty_arbitrary_cache,
                         visited,
                     )
                 })
             }) || args.0.iter().any(|arg| match arg {
-                GenericArgKind::Type(t) => {
-                    uses_ctor_generation(tcx, *t, kani_any_def, ty_arbitrary_cache, visited)
-                }
+                GenericArgKind::Type(t) => uses_ctor_generation(
+                    tcx,
+                    *t,
+                    kani_any_def,
+                    kani_assert_def,
+                    ty_arbitrary_cache,
+                    visited,
+                ),
                 _ => false,
             })
         }
@@ -431,6 +465,60 @@ pub enum CtorReturn {
     ResultOf,
 }
 
+/// Build a generic-argument list for the associated item that matches its full generics
+/// (impl parameters + own parameters) positionally: lifetimes (which may appear anywhere,
+/// e.g. first on lifetime-parameterized impls like `impl<'h> Searcher<'h>`, or as the
+/// item's own early-bound lifetime like `AtomicU8::from_ptr<'a>`) get erased regions, and
+/// type/const slots are filled from `adt_args` in order. Returns None if `adt_args` does
+/// not fit the non-lifetime slots -- kind mismatches must be prevented up front because
+/// rustc's instantiation panics on them rather than returning an error.
+fn ctor_args_with_lifetimes(
+    tcx: TyCtxt,
+    item: rustc_span::def_id::DefId,
+    adt_args: &GenericArgs,
+) -> Option<GenericArgs> {
+    // Collect the full parameter list: parent (impl) generics first, then the item's own.
+    let mut chain = vec![tcx.generics_of(item)];
+    while let Some(parent) = chain.last().unwrap().parent {
+        chain.push(tcx.generics_of(parent));
+    }
+    let mut supplied = adt_args.0.iter().filter(|a| !matches!(a, GenericArgKind::Lifetime(_)));
+    let mut args = vec![];
+    for g in chain.iter().rev() {
+        for p in &g.own_params {
+            match p.kind {
+                rustc_middle::ty::GenericParamDefKind::Lifetime => {
+                    args.push(GenericArgKind::Lifetime(rustc_public::ty::Region {
+                        kind: rustc_public::ty::RegionKind::ReErased,
+                    }));
+                }
+                rustc_middle::ty::GenericParamDefKind::Type { .. } => match supplied.next() {
+                    Some(a @ GenericArgKind::Type(_)) => args.push(a.clone()),
+                    _ => return None,
+                },
+                rustc_middle::ty::GenericParamDefKind::Const { .. } => match supplied.next() {
+                    Some(a @ GenericArgKind::Const(_)) => args.push(a.clone()),
+                    _ => return None,
+                },
+            }
+        }
+    }
+    // All supplied non-lifetime arguments must have been consumed.
+    if supplied.next().is_some() {
+        return None;
+    }
+    Some(GenericArgs(args))
+}
+
+/// True if the (stable) type still carries escaping late-bound regions, e.g. an argument
+/// like `BorrowedFd<'_>` read from a skipped fn-sig binder. Such types must not reach
+/// trait-solver queries (rustc panics wrapping them in a dummy binder) and are not
+/// generatable anyway.
+fn has_escaping_bound_vars(tcx: TyCtxt, ty: Ty) -> bool {
+    use rustc_middle::ty::TypeVisitableExt;
+    rustc_internal::internal(tcx, ty).has_escaping_bound_vars()
+}
+
 /// Search `ty`'s inherent impls for an assert-guarded *representation constructor*: an
 /// associated function returning `Self` directly whose preconditions are stated as
 /// (debug_)asserts rather than validated returns — typically `unsafe`, doc-hidden or
@@ -469,7 +557,10 @@ pub fn find_unchecked_constructor(
             // constructor with the ADT's own generic arguments: for inherent impls whose
             // parameters mirror the type's, this is the correct substitution; when it is
             // not, resolution fails and the constructor is skipped.
-            let Ok(instance) = Instance::resolve(ctor_def, adt_args) else {
+            let Some(ctor_args) = ctor_args_with_lifetimes(tcx, item, adt_args) else {
+                continue;
+            };
+            let Ok(instance) = Instance::resolve(ctor_def, &ctor_args) else {
                 continue;
             };
             if !instance.has_body() {
@@ -490,10 +581,10 @@ pub fn find_unchecked_constructor(
                 continue;
             }
             if fn_sig.inputs().is_empty()
-                || !fn_sig
-                    .inputs()
-                    .iter()
-                    .all(|input| implements_arbitrary(*input, kani_any_def, ty_arbitrary_cache))
+                || !fn_sig.inputs().iter().all(|input| {
+                    !has_escaping_bound_vars(tcx, *input)
+                        && implements_arbitrary(*input, kani_any_def, ty_arbitrary_cache)
+                })
             {
                 continue;
             }
@@ -592,14 +683,16 @@ pub fn find_arbitrary_constructor(
             // Every constructor argument must be plainly generatable (implements or derives
             // Arbitrary); constructor arguments do not get the argument-position extensions
             // (slices, smart pointers, nested constructors) in phase 1.
-            if !fn_sig
-                .inputs()
-                .iter()
-                .all(|input| implements_arbitrary(*input, kani_any_def, ty_arbitrary_cache))
-            {
+            if !fn_sig.inputs().iter().all(|input| {
+                !has_escaping_bound_vars(tcx, *input)
+                    && implements_arbitrary(*input, kani_any_def, ty_arbitrary_cache)
+            }) {
                 continue;
             }
-            let Ok(instance) = Instance::resolve(ctor_def, &GenericArgs(vec![])) else {
+            let Some(ctor_args) = ctor_args_with_lifetimes(tcx, item, &GenericArgs(vec![])) else {
+                continue;
+            };
+            let Ok(instance) = Instance::resolve(ctor_def, &ctor_args) else {
                 continue;
             };
             if !instance.has_body() {
@@ -683,6 +776,19 @@ pub fn slice_elem_unbounded_ok(_tcx: TyCtxt, ty: Ty) -> bool {
             | TyKind::RigidTy(RigidTy::Uint(_))
             | TyKind::RigidTy(RigidTy::Float(_))
     )
+}
+
+/// The bit width of a scalar-ABI type (integer primitives and enum discriminant types).
+pub fn scalar_width_bits(tcx: TyCtxt, ty: Ty) -> Option<u64> {
+    use rustc_abi::{BackendRepr, Primitive, Scalar};
+    let internal_ty = rustc_internal::internal(tcx, ty);
+    let layout = tcx
+        .layout_of(rustc_middle::ty::TypingEnv::fully_monomorphized().as_query_input(internal_ty))
+        .ok()?;
+    let BackendRepr::Scalar(scalar) = layout.backend_repr else { return None };
+    let Scalar::Initialized { value, .. } = scalar else { return None };
+    let Primitive::Int(int, _) = value else { return None };
+    Some(int.size().bits())
 }
 
 /// The niche constraint of a scalar-ABI type: the width of the scalar in bits, and the
