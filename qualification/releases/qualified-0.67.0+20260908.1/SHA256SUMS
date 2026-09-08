@@ -1,0 +1,7 @@
+0dbd12a6f894fb9a55aa68a9749c4dc4f9da3e3f3d0cbfe7dde69ef2a341c1a6  kani-0.67.0+qualified.20260908.1-aarch64-apple-darwin.tar.gz
+f5be1cbe3d3887e4bea9e8d5a2c856e9ae04a4e5d4425ee1cdef957a9960966a  kani-0.67.0+qualified.20260908.1-x86_64-unknown-linux-gnu.tar.gz
+ac1230b2e0b34e55ecb9e8640e76ead5d63b1d0a3fccb74cbcddf087e9169022  kani-verifier-0.67.0-734fcd7.crate
+e1261b6ea5f98573f9d7cd14eee28280dad04078d4236be96d06b6eb926b283c  kani-verifier-0.67.0-734fcd7.sbom.json
+2c232b74145c81075ca38746a8a35c3205ca717509270b8ca7207b31f2ee6425  kani-0.67.0+20260908.1-aarch64-unknown-linux-gnu-not-qualified.tar.gz
+df9adc9a0becef8d08d9c8a51131152a0b824aa07f8f9f6d518eb264e358d151  RELEASE-SCOPE.md
+bc9aa02bb12b887b5978500a332e881b72d3fe4132f3a281d5793142994573d9  PROVENANCE.json
