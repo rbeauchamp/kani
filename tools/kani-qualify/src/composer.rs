@@ -296,6 +296,15 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_mismatch_fails() {
+        let mut toolchain = sample_toolchain();
+        toolchain.profile = "core-v2".to_string();
+        let consumer = sample_consumer(vec!["h1"], BTreeMap::new());
+        let err = compose_test_runs(&toolchain, &consumer, &[]).unwrap_err();
+        assert!(err.contains("toolchain and consumer profiles differ"));
+    }
+
+    #[test]
     fn test_same_basename_different_dirs_and_ids() {
         let temp1 = tempfile::tempdir().unwrap();
         let temp2 = tempfile::tempdir().unwrap();

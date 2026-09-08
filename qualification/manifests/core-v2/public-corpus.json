@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "profile": "core-v2",
+  "status": "bootstrap",
+  "consumer": "public-corpus",
+  "repository": "https://github.com/rbeauchamp/kani",
+  "source_commit": "7f852085537e58d2d01197c818e86d598d7fe5af",
+  "source_tree": "082226a47fd364dad0dca3b450727128b39bf626",
+  "project_dir": "qualification/fixtures/public-corpus",
+  "cargo_manifest": "Cargo.toml",
+  "cargo_config": null,
+  "kani_flags": [],
+  "expected_harnesses": [
+    "check_assume_prunes_branch",
+    "check_atomic_alignment_ptr_197",
+    "check_bounded_loop_sum",
+    "check_char_is_control_197",
+    "check_core_range_iter_196",
+    "check_lazy_cell_from_196",
+    "check_manhattan_metric",
+    "check_midpoint_widening",
+    "check_repeat_n_default_197",
+    "check_sort3_network",
+    "check_u32_add_commutes_bounded",
+    "check_u32_bit_ops_197"
+  ],
+  "expected_cover_properties": 3,
+  "expected_unreachable_checks": {
+    "check_assume_prunes_branch": 1,
+    "check_char_is_control_197": 2,
+    "check_core_range_iter_196": 1,
+    "check_lazy_cell_from_196": 1,
+    "check_sort3_network": 4,
+    "check_u32_bit_ops_197": 1
+  },
+  "unreachable_disposition": "All unreachable checks are solver-proven infeasible paths, not defects: assumption-pruned branches (check_assume_prunes_branch) and dead panic/overflow paths inside library code (e.g. const-table indexing in char::is_control, shift glue in the bit-ops harness, swap/panic paths in the sorting network). Verification reports 0 failed checks on every harness.",
+  "diagnostics": {
+    "warnings": [
+      {
+        "message": "use of an unstable feature",
+        "disposition": "Stable rustc emits this for the register_tool attribute that kani-compiler injects to register the kani tool namespace; it appears on every consumer compile with the qualified stable toolchain and is not a consumer-code defect."
+      }
+    ],
+    "unsupported_constructs": [
+      {
+        "construct": "caller_location",
+        "disposition": "core::panic::Location::caller in core::panicking glue, present only on panic paths; the corresponding unsupported_construct check is SUCCESS (proven unreachable) in every harness where the construct appears."
+      },
+      {
+        "construct": "foreign function",
+        "disposition": "core::panicking::panic_nounwind_fmt runtime call (rust_begin_unwind), present only on panic paths; the corresponding unsupported_construct check is SUCCESS (proven unreachable) in every harness where the construct appears."
+      }
+    ]
+  }
+}

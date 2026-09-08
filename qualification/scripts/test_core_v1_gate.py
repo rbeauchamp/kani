@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Kani Contributors
 # SPDX-License-Identifier: Apache-2.0 OR MIT
-"""Unit tests for the core-v1 qualification gate."""
+"""Unit tests for the qualification gate."""
 
 from __future__ import annotations
 
@@ -130,6 +130,58 @@ Complete - 1 successfully verified harnesses, 0 failures, 1 total.
         )
 
 
+class ProfileTests(unittest.TestCase):
+    def test_accepts_successor_profile_names(self) -> None:
+        toolchain = {
+            "schema": 1,
+            "profile": "core-v2",
+            "kani_base": "0" * 40,
+            "kani_tree": "1" * 40,
+            "cargo_kani_version": "Kani Rust Verifier 0.67.0 (cargo plugin)",
+            "cbmc_version": "6.11.0 (cbmc-6.11.0)",
+            "kissat_version": "4.0.1",
+            "platforms": {
+                "aarch64-apple-darwin": {
+                    "runner": "local",
+                    "artifacts": [{"name": "bundle.tar.gz", "sha256": "2" * 64}],
+                }
+            },
+        }
+        GATE.validate_toolchain_manifest(toolchain)
+        consumer = {
+            "schema": 1,
+            "profile": "core-v2",
+            "status": "qualified",
+            "consumer": "public-corpus",
+            "repository": "https://example.invalid/repository",
+            "source_commit": "0" * 40,
+            "source_tree": "1" * 40,
+            "project_dir": ".",
+            "cargo_manifest": "Cargo.toml",
+            "cargo_config": None,
+            "kani_flags": [],
+            "expected_harnesses": ["proofs::example"],
+            "expected_cover_properties": 0,
+            "expected_unreachable_checks": {},
+            "unreachable_disposition": None,
+            "diagnostics": {"warnings": [], "unsupported_constructs": []},
+        }
+        GATE.validate_consumer_manifest(consumer)
+        GATE.validate_profile_agreement(toolchain, consumer)
+
+    def test_rejects_an_empty_or_nonstring_profile(self) -> None:
+        for profile in ("", 1):
+            with self.subTest(profile=profile):
+                with self.assertRaises(GATE.GateError):
+                    GATE.validate_profile_name(profile, "test manifest")
+
+    def test_rejects_differing_profiles(self) -> None:
+        with self.assertRaisesRegex(GATE.GateError, "profiles differ"):
+            GATE.validate_profile_agreement(
+                {"profile": "core-v1"}, {"profile": "core-v2"}
+            )
+
+
 class CheckedInManifestTests(unittest.TestCase):
     def test_synthetic_application_manifest_validates(self) -> None:
         manifest = {
@@ -156,15 +208,30 @@ class CheckedInManifestTests(unittest.TestCase):
         GATE.validate_consumer_manifest(manifest)
 
     def test_all_checked_in_manifests_validate(self) -> None:
-        manifests = MODULE_PATH.parents[1] / "manifests" / "core-v1"
-        toolchain = GATE.load_json(manifests / "toolchain.json")
-        GATE.validate_toolchain_manifest(toolchain)
-        for path in sorted(manifests.glob("*.json")):
-            if path.name == "toolchain.json":
-                continue
-            with self.subTest(path=path.name):
-                consumer = GATE.load_json(path)
-                GATE.validate_consumer_manifest(consumer)
+        manifests = MODULE_PATH.parents[1] / "manifests"
+        profiles = sorted(path for path in manifests.iterdir() if path.is_dir())
+        self.assertTrue(profiles)
+        for profile_dir in profiles:
+            toolchain_path = profile_dir / "toolchain.json"
+            consumers = sorted(
+                path
+                for path in profile_dir.glob("*.json")
+                if path.name != "toolchain.json"
+            )
+            self.assertTrue(
+                toolchain_path.is_file() or consumers,
+                f"{profile_dir.name} has no manifests",
+            )
+            if toolchain_path.is_file():
+                with self.subTest(path=toolchain_path.name, profile=profile_dir.name):
+                    toolchain = GATE.load_json(toolchain_path)
+                    self.assertEqual(toolchain["profile"], profile_dir.name)
+                    GATE.validate_toolchain_manifest(toolchain)
+            for path in consumers:
+                with self.subTest(path=path.name, profile=profile_dir.name):
+                    consumer = GATE.load_json(path)
+                    self.assertEqual(consumer["profile"], profile_dir.name)
+                    GATE.validate_consumer_manifest(consumer)
 
 
 if __name__ == "__main__":
