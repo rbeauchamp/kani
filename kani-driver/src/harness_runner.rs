@@ -306,10 +306,6 @@ impl KaniSession {
     /// Note: Takes `self` "by ownership". This function wants to be able to drop before
     /// exiting with an error code, if needed.
     pub(crate) fn print_final_summary(self, results: &[HarnessResult<'_>]) -> Result<()> {
-        if self.args.common_args.quiet {
-            return Ok(());
-        }
-
         let (automatic, manual): (Vec<_>, Vec<_>) =
             results.iter().partition(|r| r.harness.is_automatically_generated);
 
@@ -319,6 +315,21 @@ impl KaniSession {
         let succeeding = successes.len();
         let failing = failures.len();
         let total = succeeding + failing;
+
+        // Failure count of automatically generated harnesses, computed without printing so the
+        // `--quiet` path below stays honest. Must match `print_autoharness_summary`'s partition.
+        let autoharness_failing_count =
+            automatic.iter().filter(|r| r.result.status != VerificationStatus::Success).count();
+
+        if self.args.common_args.quiet {
+            // `--quiet` suppresses all output, but never the exit status: a failing
+            // verification must exit nonzero even when nothing is printed.
+            if failing + autoharness_failing_count > 0 {
+                drop(self);
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
 
         if self.args.concrete_playback.is_some() {
             if failures.is_empty() {
