@@ -20,6 +20,39 @@ cargo kani setup
 
 See [the installation guide](https://model-checking.github.io/kani/install-guide.html) for more details.
 
+### macOS Quickstart (unofficial qualified distribution, Apple Silicon)
+
+This fork publishes an **unofficial downstream distribution** of Kani, qualified for
+macOS on Apple Silicon (`aarch64-apple-darwin`). It is not sponsored or endorsed by AWS
+or the upstream Kani maintainers; the upstream project deserves the credit for Kani
+itself. The distribution preserves the dual Apache-2.0 / MIT licensing terms.
+
+Install the current qualified release (`qualified-0.67.0+20260908.1`, exact revision
+`734fcd7`) with Homebrew — no source compilation, no `cargo kani setup`:
+
+```bash
+brew tap rbeauchamp/kani       # on Homebrew 6, also: brew trust rbeauchamp/kani
+brew install cargo-kani
+cargo kani --version
+```
+
+The formula installs the GPG-verified, SHA-256-pinned release bundle (Kani plus bundled
+CBMC 6.11.0 and Kissat 4.0.1) and the exact official Rust 1.97.1 toolchain the release
+was qualified with. Release integrity: every asset is listed in `SHA256SUMS` with a
+detached GPG signature in `SHA256SUMS.asc` (key
+[`2A76 8912 80F2 61EB DBC9 1F66 E530 DB27 2392 A04C`](https://github.com/rbeauchamp.gpg));
+see the [release record](qualification/releases/qualified-0.67.0+20260908.1/release-scope.md)
+and the [clean-room install report](https://github.com/rbeauchamp/homebrew-kani/blob/main/CLEANROOM-REPORT.md).
+
+Update with `brew update && brew upgrade cargo-kani`; uninstall with
+`brew uninstall cargo-kani && brew untap rbeauchamp/kani`. Troubleshooting:
+- `kani --version --verbose` should report `Host architecture: aarch64` and native
+  CBMC/Kissat; a Rosetta warning means an x86_64 toolchain is being used (reinstall natively).
+- Intel macOS is outside this distribution's support scope (the formula rejects it);
+  use the upstream installation path instead.
+- Linux users are unaffected: Ubuntu 22.04/24.04 x86_64 and 24.04 ARM64 remain supported
+  through the existing release bundles.
+
 ## How to use Kani
 
 Similar to testing, you write a harness, but with Kani you can check all possible values using `kani::any()`:
